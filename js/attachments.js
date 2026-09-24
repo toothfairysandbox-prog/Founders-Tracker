@@ -1,27 +1,23 @@
-/* File attachments for notes — backed by Supabase Storage.
+/* File attachments for notes — backed by Firebase Storage.
  *
- * ── Where the settings go ────────────────────────────────────────────────
- * Fill in url and key below from your Supabase project (Settings → API).
- * Leave them blank and nothing breaks: the app still runs, attachments just
- * show a "not set up yet" message instead of an upload button.
+ * There is nothing to configure here. Uploads use the same Firebase project as
+ * the rest of the app, so the only setup is switching Storage on in the Firebase
+ * console and publishing storage.rules. If Storage isn't enabled yet, the app
+ * still runs and the attachment box says so instead of failing.
  *
- * ── Why this is safe to have in a public file ────────────────────────────
- * The key below is the *publishable* key. On its own it opens nothing. Every
- * request also carries your Firebase login, and the bucket's policies (see
- * supabase-policies.sql) only accept the three allowed accounts. Downloads go
- * through short-lived signed links, so a file URL can't be passed around and
- * still work an hour later.
+ * ── On download links ────────────────────────────────────────────────────
+ * Firebase hands out a long-lived URL carrying an unguessable token. Who can
+ * *get* that URL is controlled by storage.rules — only the three allowed
+ * accounts — but once a URL exists, anyone holding it can open the file without
+ * signing in, and it doesn't expire on its own.
  *
- * Never put the service_role key in here. That one is a real secret and it
- * bypasses every policy.
+ * For call notes between two founders that's a fair trade. If a file ever needs
+ * to be locked down harder, Firebase console → Storage → the file → "Revoke
+ * access token" kills every link to it instantly.
  */
-const SUPABASE = {
-  url:    "",              // e.g. "https://abcdefghijkl.supabase.co"  (no trailing slash)
-  key:    "",              // the publishable / anon key
-  bucket: "attachments"
-};
 
-/* Supabase's free plan caps a single upload at 50 MB. */
+/* Firebase Storage accepts far larger, but a note attachment that won't finish
+   uploading on a hotel wifi isn't much use to anyone. */
 const MAX_BYTES = 50 * 1024 * 1024;
 
 /* What you can attach. Deliberately broad — decks, sheets, docs, PDFs,
@@ -70,26 +66,27 @@ function newFileId(){
   return "f" + Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
 }
 
-const configured = () => !!(SUPABASE.url && SUPABASE.key);
-const api = (p) => SUPABASE.url.replace(/\/+$/, "") + "/storage/v1" + p;
-
-async function authHeaders(){
-  var token = window.__FB && window.__FB.idToken ? await window.__FB.idToken() : null;
-  if (!token) throw new Error("not-signed-in");
-  return { "Authorization": "Bearer " + token, "apikey": SUPABASE.key };
+function store(){
+  return (window.__FB && window.__FB.storage) ? window.__FB.storage : null;
 }
+const configured = () => !!store();
 
-/* Anything that reaches the user as a sentence lives here, so the wording is
-   in one place and the call sites stay readable. */
-function explain(status, body){
-  if (status === 0)   return "Upload failed — check your connection and try again.";
-  if (status === 401 || status === 403)
-    return "Storage refused that. Usually it means the Supabase policies haven't been " +
-           "applied yet, or your Firebase project isn't linked in Supabase's Third-Party Auth.";
-  if (status === 404) return "The '" + SUPABASE.bucket + "' bucket doesn't exist yet in Supabase.";
-  if (status === 409) return "A file with that name is already there.";
-  if (status === 413) return "That file is too big for the storage plan.";
-  return "Upload failed (" + status + ")." + (body ? " " + String(body).slice(0, 120) : "");
+/* Anything that reaches the user as a sentence lives here, so the wording is in
+   one place and the call sites stay readable. */
+function explain(err){
+  var code = (err && (err.code || err.message)) || "";
+  if (/unauthorized|permission/i.test(code))
+    return "Storage refused that. Usually it means storage.rules hasn't been published yet, " +
+           "or this account isn't on the list inside it.";
+  if (/unauthenticated/i.test(code))  return "Sign in again to upload files.";
+  if (/quota|exceeded/i.test(code))   return "The project's storage quota is full.";
+  if (/retry-limit|network|timeout/i.test(code))
+    return "Upload timed out — check your connection and try again.";
+  if (/object-not-found/i.test(code)) return "That file is no longer in storage.";
+  if (/canceled/i.test(code))         return "Upload cancelled.";
+  if (/bucket-not-found|no default bucket/i.test(code))
+    return "Storage isn't switched on for this Firebase project yet.";
+  return "Upload failed." + (code ? " (" + String(code).slice(0, 80) + ")" : "");
 }
 
 /* ---------------------------------------------------------------------- */
@@ -104,77 +101,57 @@ function check(file){
   return null;
 }
 
-/* XHR rather than fetch, because fetch can't report upload progress and a
-   40 MB deck on a slow connection needs a bar rather than a frozen button. */
 function upload(file, noteId, onProgress){
   var problem = check(file);
   if (problem) return Promise.reject(new Error(problem));
-  if (!configured()) return Promise.reject(new Error("File storage isn't set up yet."));
+  var s = store();
+  if (!s) return Promise.reject(new Error("File storage isn't switched on yet."));
 
   var id   = newFileId();
   var path = "notes/" + noteId + "/" + id + "-" + slug(file.name);
+  var kind = kindOf(file.name).kind;
 
-  return authHeaders().then(function(h){
-    return new Promise(function(resolve, reject){
-      var xhr = new XMLHttpRequest();
-      xhr.open("POST", api("/object/" + SUPABASE.bucket + "/" + path), true);
-      xhr.setRequestHeader("Authorization", h.Authorization);
-      xhr.setRequestHeader("apikey", h.apikey);
-      xhr.setRequestHeader("x-upsert", "false");
-      if (file.type) xhr.setRequestHeader("Content-Type", file.type);
-      xhr.upload.onprogress = function(e){
-        if (onProgress && e.lengthComputable) onProgress(e.loaded / e.total);
-      };
-      xhr.onload = function(){
-        if (xhr.status >= 200 && xhr.status < 300){
-          resolve({
-            id: id,
-            name: file.name,
-            size: file.size,
-            type: file.type || "",
-            kind: kindOf(file.name).kind,
-            path: path,
-            at: Date.now()
-          });
-        } else {
-          reject(new Error(explain(xhr.status, xhr.responseText)));
-        }
-      };
-      xhr.onerror = function(){ reject(new Error(explain(0))); };
-      xhr.send(file);
-    });
-  }).catch(function(e){
-    if (e && e.message === "not-signed-in") throw new Error("Sign in again to upload files.");
-    throw e;
+  /* The stored path has an id bolted onto the front, so without this the user
+     would download "fmuft7op-Pitch_deck.pptx". Content-Disposition is set at
+     upload time because a Firebase download URL can't override it later.
+     Things a browser can render stay inline; everything else downloads. */
+  var inline = ["pdf", "image", "text", "av"].indexOf(kind) !== -1;
+  var meta = {
+    contentType: file.type || "application/octet-stream",
+    contentDisposition: (inline ? "inline" : "attachment") +
+                        '; filename="' + file.name.replace(/["\\]/g, "") + '"'
+  };
+
+  return s.upload(path, file, onProgress, meta).then(function(){
+    return {
+      id: id,
+      name: file.name,
+      size: file.size,
+      type: file.type || "",
+      kind: kind,
+      path: path,
+      at: Date.now()
+    };
+  }, function(err){
+    throw new Error(explain(err));
   });
 }
 
-/* Signed links expire, so we mint one per click rather than storing URLs. */
-async function link(path, download){
-  if (!configured()) throw new Error("File storage isn't set up yet.");
-  var h = await authHeaders();
-  var res = await fetch(api("/object/sign/" + SUPABASE.bucket + "/" + path), {
-    method: "POST",
-    headers: Object.assign({ "Content-Type": "application/json" }, h),
-    body: JSON.stringify({ expiresIn: 3600 })
-  });
-  if (!res.ok) throw new Error(explain(res.status, await res.text().catch(function(){ return ""; })));
-  var data = await res.json();
-  var signed = data.signedURL || data.signedUrl || "";
-  if (!signed) throw new Error("Storage didn't return a link.");
-  return SUPABASE.url.replace(/\/+$/, "") + "/storage/v1" + signed +
-         (download ? "&download=" + encodeURIComponent(download) : "");
+/* Resolved per click rather than stored on the note, so revoking a file's token
+   in the Firebase console actually takes effect. */
+function link(path){
+  var s = store();
+  if (!s) return Promise.reject(new Error("File storage isn't switched on yet."));
+  return s.url(path).catch(function(err){ throw new Error(explain(err)); });
 }
 
-/* Best-effort: a file left behind costs a few KB, a thrown error costs the
-   user their delete. Callers don't wait on this. */
-async function remove(paths){
-  if (!configured() || !paths || !paths.length) return;
-  var h;
-  try { h = await authHeaders(); } catch(e){ return; }
-  await Promise.all(paths.map(function(p){
-    return fetch(api("/object/" + SUPABASE.bucket + "/" + p), { method: "DELETE", headers: h })
-      .catch(function(){});
+/* Best-effort: a file left behind costs a few KB, a thrown error costs the user
+   their delete. Callers don't wait on this. */
+function remove(paths){
+  var s = store();
+  if (!s || !paths || !paths.length) return Promise.resolve();
+  return Promise.all(paths.map(function(p){
+    return s.remove(p).catch(function(){});
   }));
 }
 

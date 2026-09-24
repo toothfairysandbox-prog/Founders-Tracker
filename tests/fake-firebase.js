@@ -26,11 +26,43 @@
   }
   let seq = 0;
   window.__STORE = store;
+  window.__FILES = {};
+  window.__URL_CALLS = [];
   window.__FB = {
     signIn: () => { window.__cb({ email: window.__EMAIL || 'samuelgibby89@gmail.com',
                                  displayName: window.__NAME || 'Samuel Gibby', photoURL: '' }); return Promise.resolve(); },
     signOut: () => { window.__cb(null); return Promise.resolve(); },
     idToken: () => Promise.resolve('fake.jwt.token'),
+    storage: {
+      upload: (path, file, onProgress, meta) => new Promise((resolve, reject) => {
+        if (window.__FAIL_UPLOAD) return reject({ code: 'storage/unauthorized' });
+        if (onProgress) { onProgress(0.4); onProgress(1); }
+        const fr = new FileReader();
+        fr.onload = () => {
+          window.__FILES[path] = { size: file.size, type: file.type,
+                                   meta: meta || null, bytes: fr.result.byteLength };
+          resolve();
+        };
+        fr.onerror = () => reject({ code: 'storage/unknown' });
+        fr.readAsArrayBuffer(file);
+      }),
+      /* A blob: URL rather than a real firebasestorage.googleapis.com one — the
+         test browser can't reach the internet, and a URL that fails to load
+         navigates the app away and hides what we're actually testing. The path
+         asked for is recorded so tests can assert on it. */
+      url: (path) => {
+        if (!(path in window.__FILES)) return Promise.reject({ code: 'storage/object-not-found' });
+        window.__URL_CALLS.push(path);
+        const f = window.__FILES[path];
+        return Promise.resolve(URL.createObjectURL(
+          new Blob([new Uint8Array(f.bytes || 1)], { type: f.type || 'application/octet-stream' })));
+      },
+      remove: (path) => {
+        if (!(path in window.__FILES)) return Promise.reject({ code: 'storage/object-not-found' });
+        delete window.__FILES[path];
+        return Promise.resolve();
+      }
+    },
     onAuth: (cb) => { window.__cb = cb; setTimeout(() => cb(null), 0); },
     colRef: (p) => ({ __col: p }),
     docRef: (p) => ({ __doc: p }),

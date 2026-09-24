@@ -1080,7 +1080,7 @@ function renderBuild(){
 
 /* ---- attachments on notes ----
    Metadata (name, size, path) rides along on the note document in Firestore.
-   The bytes themselves live in Supabase Storage. A note therefore stays small
+   The bytes themselves live in Firebase Storage. A note therefore stays small
    and loads fast whether it has no files or nine. */
 /* The extension itself is the icon. Tried glyphs first; at this size a PDF, a
    spreadsheet and a deck all looked like the same little box. */
@@ -1093,9 +1093,9 @@ function att(){ return window.__ATT || null; }
 function attachEditorHtml(){
   var A = att();
   if(!A || !A.configured()){
-    return '<div class="att-off">File storage isn’t switched on yet — once the '+
-           'Supabase details are filled into <code>js/attachments.js</code> you can attach '+
-           'PDFs, decks, spreadsheets and images here.</div>';
+    return '<div class="att-off">File storage isn’t switched on yet — once Storage is '+
+           'enabled on the Firebase project and <code>storage.rules</code> is published, you '+
+           'can attach PDFs, decks, spreadsheets and images here.</div>';
   }
   var html = '<div class="att-drop" id="attDrop">'+
       '<button type="button" class="btn ghost" data-act="attpick">Choose files</button>'+
@@ -1822,12 +1822,14 @@ document.addEventListener("click", function(e){
     }
     var was = btn.textContent;
     btn.textContent = "Opening…";
-    att().link(path, inline ? null : fname).then(function(url){
+    att().link(path).then(function(url){
       btn.textContent = was;
       if(inline){
         if(win) win.location = url;
         else window.location.href = url;   /* popup blocked — use this tab */
       } else {
+        /* The download attribute is ignored cross-origin, so the filename comes
+           from the Content-Disposition set when the file was uploaded. */
         var a = document.createElement("a");
         a.href = url; a.download = fname; a.rel = "noopener";
         document.body.appendChild(a); a.click(); a.remove();

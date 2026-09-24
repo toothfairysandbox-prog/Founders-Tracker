@@ -12,6 +12,9 @@ import { getAuth, GoogleAuthProvider, signInWithPopup, signOut, onAuthStateChang
 import { getFirestore, collection, doc, getDoc, getDocs, setDoc, updateDoc, addDoc,
          deleteDoc, onSnapshot, query, where, orderBy, limit }
   from "https://www.gstatic.com/firebasejs/12.18.0/firebase-firestore.js";
+import { getStorage, ref as storageRef, uploadBytesResumable, getDownloadURL,
+         deleteObject }
+  from "https://www.gstatic.com/firebasejs/12.18.0/firebase-storage.js";
 
 const firebaseConfig = {
   apiKey: "AIzaSyCFQ_3429pcInL1kLMfn3L2u_tByQT2nJ0",
@@ -25,6 +28,7 @@ const firebaseConfig = {
 const app  = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const fs   = getFirestore(app);
+const st   = getStorage(app);
 
 window.__FB = {
   signIn:  () => signInWithPopup(auth, new GoogleAuthProvider()),
@@ -32,9 +36,23 @@ window.__FB = {
   onAuth:  (cb) => onAuthStateChanged(auth, cb),
   colRef:  (path) => collection(fs, ...path.split("/")),
   docRef:  (path) => doc(fs, ...path.split("/")),
-  /* Supabase needs this to prove who is uploading. See js/attachments.js. */
   idToken: () => auth.currentUser ? auth.currentUser.getIdToken() : Promise.resolve(null),
   getDoc, getDocs, setDoc, updateDoc, addDoc, deleteDoc, onSnapshot,
-  query, where, orderBy, limit
+  query, where, orderBy, limit,
+
+  /* File attachments. Kept behind this object rather than imported directly in
+     attachments.js so the tests can stand in for it, the same way they do for
+     the database. */
+  storage: {
+    upload: (path, file, onProgress, meta) => new Promise((resolve, reject) => {
+      const task = uploadBytesResumable(storageRef(st, path), file, meta || undefined);
+      task.on("state_changed",
+        (s) => { if (onProgress && s.totalBytes) onProgress(s.bytesTransferred / s.totalBytes); },
+        reject,
+        () => resolve());
+    }),
+    url:    (path) => getDownloadURL(storageRef(st, path)),
+    remove: (path) => deleteObject(storageRef(st, path))
+  }
 };
 window.dispatchEvent(new Event("fb-ready"));
