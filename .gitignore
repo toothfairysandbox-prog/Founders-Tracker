@@ -4,3 +4,4 @@ tests/*.png
 .DS_Store
 *.bak
 *.png
+tests/node_modules

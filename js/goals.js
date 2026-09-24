@@ -1090,18 +1090,38 @@ function attTag(f){
 }
 function att(){ return window.__ATT || null; }
 
+function findFileMeta(fid){
+  for(var i=0;i<state.noteFiles.length;i++){
+    if(state.noteFiles[i].fid === fid) return state.noteFiles[i];
+  }
+  for(var j=0;j<state.notes.length;j++){
+    var fl = state.notes[j].files || [];
+    for(var k=0;k<fl.length;k++){ if(fl[k].fid === fid) return fl[k]; }
+  }
+  return null;
+}
+
 function attachEditorHtml(){
   var A = att();
   if(!A || !A.configured()){
-    return '<div class="att-off">File storage isn’t switched on yet — once Storage is '+
-           'enabled on the Firebase project and <code>storage.rules</code> is published, you '+
-           'can attach PDFs, decks, spreadsheets and images here.</div>';
+    return '<div class="att-off">Attachments need the shared database, and this board is '+
+           'running offline right now. Files can be added once it reconnects \u2014 the dot '+
+           'at the bottom of the page shows which mode you\u2019re in.</div>';
   }
   var html = '<div class="att-drop" id="attDrop">'+
       '<button type="button" class="btn ghost" data-act="attpick">Choose files</button>'+
       '<span class="att-hint">or drop them here · up to '+esc(A.humanSize(A.maxBytes))+' each</span>'+
       '<input type="file" id="attInput" multiple accept="'+esc(A.accept)+'" hidden>'+
     '</div>';
+  /* Only worth saying once there's something to say. The ceiling is shared with
+     everything else in the database, so it's better seen coming than hit. */
+  var use = A.usage(state.notes, state.noteFiles);
+  if(use.bytes > 0){
+    var nearFull = use.bytes > use.cap * 0.8;
+    html += '<div class="att-use'+(nearFull?" warn":"")+'">'+
+      esc(A.humanSize(use.bytes))+' of '+esc(A.humanSize(use.cap))+' used across all notes'+
+      (nearFull ? ' \u2014 getting full' : '')+'</div>';
+  }
   if(state.attErr) html += '<div class="att-err">'+esc(state.attErr)+'</div>';
 
   html += '<div class="att-list">';
@@ -1124,7 +1144,7 @@ function attRowHtml(f, editable){
   return '<div class="att-row">'+
     '<span class="att-ico att-'+esc(f.kind||"file")+'">'+esc(attTag(f))+'</span>'+
     '<button type="button" class="att-name" data-act="attopen" '+
-      'data-path="'+esc(f.path)+'" data-fn="'+esc(f.name)+'" '+
+      'data-fid="'+esc(f.fid||f.id)+'" data-fn="'+esc(f.name)+'" '+
       'data-kind="'+esc(f.kind||"file")+'">'+esc(f.name)+'</button>'+
     '<span class="att-size">'+esc(A ? A.humanSize(f.size) : "")+'</span>'+
     (editable
@@ -1171,7 +1191,7 @@ function attStartUploads(fileList){
     }).then(function(meta){
       delete state.uploads[tmp];
       state.noteFiles = state.noteFiles.concat([meta]);
-      state.noteAdded = state.noteAdded.concat([meta.path]);
+      state.noteAdded = state.noteAdded.concat([meta]);
       render();
     }, function(err){
       delete state.uploads[tmp];
@@ -1788,16 +1808,19 @@ document.addEventListener("click", function(e){
       return true;
     });
     if(gone){
-      var i = state.noteAdded.indexOf(gone.path);
+      var i = -1;
+      for(var z=0; z<state.noteAdded.length; z++){
+        if(state.noteAdded[z].fid === gone.fid){ i = z; break; }
+      }
       if(i !== -1){
-        /* Added and removed without ever saving — nothing is referencing it,
-           so take it out of storage now. */
+        /* Added and removed without ever saving — nothing references it, so
+           take it out of the database now. */
         state.noteAdded.splice(i, 1);
-        if(att()) att().remove([gone.path]);
+        if(att()) att().remove([gone]);
       } else {
-        /* Already saved on the note. Hold the deletion until they commit,
-           so Cancel really does undo it. */
-        state.noteRemoved = state.noteRemoved.concat([gone.path]);
+        /* Already saved on the note. Hold the deletion until they commit, so
+           Cancel really does undo it. */
+        state.noteRemoved = state.noteRemoved.concat([gone]);
       }
     }
     state.attErr = "";
@@ -1805,39 +1828,40 @@ document.addEventListener("click", function(e){
     return;
   }
   if(act==="attopen"){
-    var path = btn.getAttribute("data-path");
-    var fname = btn.getAttribute("data-fn") || "";
+    var fid = btn.getAttribute("data-fid");
     var kind = btn.getAttribute("data-kind") || "file";
-    if(!att()) return;
+    var fname = btn.getAttribute("data-fn") || "";
+    var meta = findFileMeta(fid);
+    if(!att() || !meta) return;
     /* Things a browser can show; everything else is a download. */
     var inline = ["pdf","image","text","av"].indexOf(kind) !== -1;
-    /* The tab has to be opened inside the click itself. Minting the signed
-       link takes a network round trip, and a window.open() after that has
-       lost the user gesture — every popup blocker eats it. So claim the tab
-       now and point it somewhere once the link arrives. */
+    /* The tab has to be claimed inside the click itself. Reassembling the file
+       takes a round trip per chunk, and a window.open() after that has lost the
+       user gesture — every popup blocker eats it. */
     var win = null;
     if(inline){
       win = window.open("about:blank", "_blank");
       if(win) try{ win.opener = null; }catch(e){}
     }
     var was = btn.textContent;
-    btn.textContent = "Opening…";
-    att().link(path).then(function(url){
+    btn.textContent = "Opening\u2026";
+    att().link(meta).then(function(url){
       btn.textContent = was;
       if(inline){
         if(win) win.location = url;
         else window.location.href = url;   /* popup blocked — use this tab */
       } else {
-        /* The download attribute is ignored cross-origin, so the filename comes
-           from the Content-Disposition set when the file was uploaded. */
         var a = document.createElement("a");
         a.href = url; a.download = fname; a.rel = "noopener";
         document.body.appendChild(a); a.click(); a.remove();
       }
+      /* Blob URLs pin the whole file in memory until they're released. Give the
+         tab or the download a moment to take hold of it, then let it go. */
+      setTimeout(function(){ try{ URL.revokeObjectURL(url); }catch(e){} }, 60000);
     }, function(err){
       btn.textContent = was;
       if(win) try{ win.close(); }catch(e){}
-      state.attErr = (err && err.message) || "Couldn’t open that file.";
+      state.attErr = (err && err.message) || "Couldn\u2019t open that file.";
       render();
     });
     return;
@@ -1845,12 +1869,6 @@ document.addEventListener("click", function(e){
   if(act==="tognote"){
     if(state.openNotes[id]) delete state.openNotes[id]; else state.openNotes[id]=true;
     render(); return;
-  }
-  if(act==="setwho"){
-    state.noteWho = btn.getAttribute("data-w");
-    var ws = btn.parentNode.children;
-    for(var w=0;w<ws.length;w++) ws[w].setAttribute("aria-pressed", ws[w]===btn ? "true":"false");
-    return;
   }
   if(act==="savenote"){
     var title = (state.drafts["nf-title"]||"").trim();
@@ -1889,7 +1907,7 @@ document.addEventListener("click", function(e){
     if(btn.getAttribute("data-armed")==="1"){
       var doomed = findNote(id);
       if(doomed && doomed.files && doomed.files.length && att()){
-        att().remove(doomed.files.map(function(f){ return f.path; }));
+        att().remove(doomed.files);
       }
       delete state.openNotes[id];
       state.notes = state.notes.filter(function(x){ return x.id!==id; });

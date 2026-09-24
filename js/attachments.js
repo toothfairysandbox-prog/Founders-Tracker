@@ -1,28 +1,34 @@
-/* File attachments for notes — backed by Firebase Storage.
+/* File attachments for notes — stored in Firestore itself.
  *
- * There is nothing to configure here. Uploads use the same Firebase project as
- * the rest of the app, so the only setup is switching Storage on in the Firebase
- * console and publishing storage.rules. If Storage isn't enabled yet, the app
- * still runs and the attachment box says so instead of failing.
+ * ── Why this way ─────────────────────────────────────────────────────────
+ * Firebase Storage would be the obvious home for files, but since late 2024 it
+ * requires a billing account even to use its free allowance. This keeps the whole
+ * app on the free tier with no second service and nothing to configure: a file is
+ * split into pieces small enough to be Firestore documents, and reassembled in the
+ * browser when you open it.
  *
- * ── On download links ────────────────────────────────────────────────────
- * Firebase hands out a long-lived URL carrying an unguessable token. Who can
- * *get* that URL is controlled by storage.rules — only the three allowed
- * accounts — but once a URL exists, anyone holding it can open the file without
- * signing in, and it doesn't expire on its own.
+ * ── What that costs ──────────────────────────────────────────────────────
+ * Firestore caps a single document at 1 MB, and base64 makes bytes about a third
+ * bigger, so files arrive in ~500 KB slices. The practical limits:
  *
- * For call notes between two founders that's a fair trade. If a file ever needs
- * to be locked down harder, Firebase console → Storage → the file → "Revoke
- * access token" kills every link to it instantly.
+ *   · 10 MB per file          — a 40 MB video is the wrong thing to put here
+ *   · ~750 MB in total        — the free tier's 1 GB, minus base64 overhead
+ *   · a file's chunks are only read when you open it, never when a note renders
+ *
+ * If you outgrow this, Firebase Storage is a drop-in replacement for this file —
+ * the rest of the app talks to it through window.__ATT and doesn't care.
  */
 
-/* Firebase Storage accepts far larger, but a note attachment that won't finish
-   uploading on a hotel wifi isn't much use to anyone. */
-const MAX_BYTES = 50 * 1024 * 1024;
+const MAX_BYTES = 10 * 1024 * 1024;
 
-/* What you can attach. Deliberately broad — decks, sheets, docs, PDFs,
-   images, archives, plain text, audio and video. Anything executable is
-   refused, which is the only category worth blocking. */
+/* 525,000 bytes → 700,000 base64 characters, comfortably inside Firestore's
+   1 MB document ceiling with room for field names and overhead. Divisible by 3
+   so each slice encodes cleanly on its own, with no padding mid-file. */
+const CHUNK_BYTES = 525000;
+
+/* What you can attach. Deliberately broad — decks, sheets, docs, PDFs, images,
+   archives, plain text, audio and video. Anything executable is refused, which
+   is the only category worth blocking. */
 const KINDS = [
   { kind: "pdf",   label: "PDF",         ext: ["pdf"] },
   { kind: "image", label: "Image",       ext: ["png","jpg","jpeg","gif","webp","avif","bmp","tif","tiff","heic","heif","svg"] },
@@ -53,39 +59,40 @@ function humanSize(n){
   if (n < 1024 * 1024) return (n / 1024).toFixed(0) + " KB";
   return (n / 1048576).toFixed(n < 10485760 ? 1 : 0) + " MB";
 }
-/* Keeps the original name readable in the storage path without letting a
-   filename escape its folder or smuggle in characters the API dislikes. */
-function slug(name){
-  return (name || "file")
-    .replace(/[^\w.\- ]+/g, "")
-    .replace(/\s+/g, "_")
-    .replace(/_+/g, "_")
-    .slice(-80) || "file";
-}
 function newFileId(){
   return "f" + Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
 }
 
-function store(){
-  return (window.__FB && window.__FB.storage) ? window.__FB.storage : null;
+/* String.fromCharCode.apply blows the stack past ~100k arguments, so walk the
+   bytes in blocks rather than spreading the whole slice in one call. */
+function toBase64(bytes){
+  var out = "", BLOCK = 0x8000;
+  for (var i = 0; i < bytes.length; i += BLOCK){
+    out += String.fromCharCode.apply(null, bytes.subarray(i, i + BLOCK));
+  }
+  return btoa(out);
 }
-const configured = () => !!store();
+function fromBase64(str){
+  var bin = atob(str), arr = new Uint8Array(bin.length);
+  for (var i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i);
+  return arr;
+}
 
-/* Anything that reaches the user as a sentence lives here, so the wording is in
-   one place and the call sites stay readable. */
+function db(){
+  return (window.__SVC && window.__SVC.db) ? window.__SVC.db() : null;
+}
+const configured = () => !!db();
+
 function explain(err){
   var code = (err && (err.code || err.message)) || "";
-  if (/unauthorized|permission/i.test(code))
-    return "Storage refused that. Usually it means storage.rules hasn't been published yet, " +
-           "or this account isn't on the list inside it.";
-  if (/unauthenticated/i.test(code))  return "Sign in again to upload files.";
-  if (/quota|exceeded/i.test(code))   return "The project's storage quota is full.";
-  if (/retry-limit|network|timeout/i.test(code))
-    return "Upload timed out — check your connection and try again.";
-  if (/object-not-found/i.test(code)) return "That file is no longer in storage.";
-  if (/canceled/i.test(code))         return "Upload cancelled.";
-  if (/bucket-not-found|no default bucket/i.test(code))
-    return "Storage isn't switched on for this Firebase project yet.";
+  if (/permission|unauthorized/i.test(code))
+    return "The database refused that. Check this account is listed in firestore.rules.";
+  if (/unavailable|network|offline/i.test(code))
+    return "Lost the connection partway through. Try again when you're back online.";
+  if (/quota|resource-exhausted/i.test(code))
+    return "The database has hit its daily write limit. Try again tomorrow.";
+  if (/invalid-argument|too large/i.test(code))
+    return "One of the pieces came out too big for the database — tell Claude, that's a bug.";
   return "Upload failed." + (code ? " (" + String(code).slice(0, 80) + ")" : "");
 }
 
@@ -96,63 +103,98 @@ function check(file){
   if (BLOCKED.indexOf(extOf(file.name)) !== -1)
     return "Programs can't be attached — " + extOf(file.name).toUpperCase() + " files are blocked.";
   if (file.size > MAX_BYTES)
-    return '"' + file.name + '" is ' + humanSize(file.size) + ". The limit is " + humanSize(MAX_BYTES) + ".";
+    return '"' + file.name + '" is ' + humanSize(file.size) + ". The limit is " +
+           humanSize(MAX_BYTES) + " — put bigger files in Drive and paste the link into the note.";
   if (file.size === 0) return '"' + file.name + '" is empty.';
   return null;
 }
 
-function upload(file, noteId, onProgress){
+async function upload(file, noteId, onProgress){
   var problem = check(file);
-  if (problem) return Promise.reject(new Error(problem));
-  var s = store();
-  if (!s) return Promise.reject(new Error("File storage isn't switched on yet."));
+  if (problem) throw new Error(problem);
+  var d = db();
+  if (!d) throw new Error("Attachments need the shared database, and this board is offline.");
 
-  var id   = newFileId();
-  var path = "notes/" + noteId + "/" + id + "-" + slug(file.name);
-  var kind = kindOf(file.name).kind;
+  var fid   = newFileId();
+  var bytes = new Uint8Array(await file.arrayBuffer());
+  var total = Math.max(1, Math.ceil(bytes.length / CHUNK_BYTES));
 
-  /* The stored path has an id bolted onto the front, so without this the user
-     would download "fmuft7op-Pitch_deck.pptx". Content-Disposition is set at
-     upload time because a Firebase download URL can't override it later.
-     Things a browser can render stay inline; everything else downloads. */
-  var inline = ["pdf", "image", "text", "av"].indexOf(kind) !== -1;
-  var meta = {
-    contentType: file.type || "application/octet-stream",
-    contentDisposition: (inline ? "inline" : "attachment") +
-                        '; filename="' + file.name.replace(/["\\]/g, "") + '"'
-  };
-
-  return s.upload(path, file, onProgress, meta).then(function(){
-    return {
-      id: id,
-      name: file.name,
-      size: file.size,
-      type: file.type || "",
-      kind: kind,
-      path: path,
-      at: Date.now()
-    };
-  }, function(err){
+  try {
+    /* Sequential rather than parallel: a 10 MB file is 20 documents, and firing
+       them all at once is how you trip the database's rate limiting. */
+    for (var i = 0; i < total; i++){
+      var slice = bytes.subarray(i * CHUNK_BYTES, (i + 1) * CHUNK_BYTES);
+      await d.doc("filechunks/" + fid + "_" + i).set({ b: toBase64(slice) });
+      if (onProgress) onProgress((i + 1) / total);
+    }
+  } catch (err) {
+    /* Don't leave half a file behind taking up the quota. */
+    remove([{ fid: fid, chunks: total }]);
     throw new Error(explain(err));
+  }
+
+  return {
+    id: fid,
+    fid: fid,
+    name: file.name,
+    size: file.size,
+    type: file.type || "",
+    kind: kindOf(file.name).kind,
+    chunks: total,
+    at: Date.now()
+  };
+}
+
+/* Reassembles the file and hands back a blob: URL. Same-origin, so unlike a
+   storage link the download attribute works and the user gets their own
+   filename back rather than an internal id. */
+async function link(meta){
+  var d = db();
+  if (!d) throw new Error("Attachments need the shared database, and this board is offline.");
+  var parts = [];
+  for (var i = 0; i < (meta.chunks || 1); i++){
+    var snap = await d.doc("filechunks/" + meta.fid + "_" + i).get();
+    /* The shim hands back exists as a plain boolean; the raw Firestore SDK
+       makes it a method. Accept either so this works against both. */
+    var there = (typeof snap.exists === "function") ? snap.exists() : snap.exists;
+    if (!there || !snap.data() || typeof snap.data().b !== "string"){
+      throw new Error("Part " + (i + 1) + " of this file is missing — it may not have " +
+                      "finished uploading.");
+    }
+    parts.push(fromBase64(snap.data().b));
+  }
+  return URL.createObjectURL(new Blob(parts, { type: meta.type || "application/octet-stream" }));
+}
+
+/* Best-effort: a chunk left behind costs a little quota, a thrown error costs
+   the user their delete. Callers don't wait on this. */
+function remove(metas){
+  var d = db();
+  if (!d || !metas || !metas.length) return Promise.resolve();
+  var jobs = [];
+  metas.forEach(function(m){
+    for (var i = 0; i < (m.chunks || 1); i++){
+      jobs.push(d.doc("filechunks/" + m.fid + "_" + i).delete().catch(function(){}));
+    }
   });
+  return Promise.all(jobs);
 }
 
-/* Resolved per click rather than stored on the note, so revoking a file's token
-   in the Firebase console actually takes effect. */
-function link(path){
-  var s = store();
-  if (!s) return Promise.reject(new Error("File storage isn't switched on yet."));
-  return s.url(path).catch(function(err){ throw new Error(explain(err)); });
-}
-
-/* Best-effort: a file left behind costs a few KB, a thrown error costs the user
-   their delete. Callers don't wait on this. */
-function remove(paths){
-  var s = store();
-  if (!s || !paths || !paths.length) return Promise.resolve();
-  return Promise.all(paths.map(function(p){
-    return s.remove(p).catch(function(){});
-  }));
+/* Everything attached across every note, so the ceiling is visible before you
+   hit it rather than after. `extra` is the note being edited right now, whose
+   files aren't saved yet — without it the meter ignores what you just added,
+   which is exactly when you want to see it move. */
+function usage(notes, extra){
+  var seen = {}, n = 0;
+  function add(f){
+    var k = f.fid || f.id;
+    if (!k || seen[k]) return;
+    seen[k] = true;
+    n += (f.size || 0);
+  }
+  (extra || []).forEach(add);
+  (notes || []).forEach(function(note){ (note.files || []).forEach(add); });
+  return { bytes: n, cap: 750 * 1024 * 1024 };
 }
 
 window.__ATT = {
@@ -163,6 +205,7 @@ window.__ATT = {
   check: check,
   kindOf: kindOf,
   humanSize: humanSize,
+  usage: usage,
   maxBytes: MAX_BYTES,
   /* Feeds the file picker's accept="" so the OS dialog greys out the rest. */
   accept: KINDS.reduce(function(a, k){

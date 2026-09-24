@@ -724,3 +724,7 @@
 #goals-root .att-bar i,#goals-overlays .att-bar i{
   display:block;height:100%;background:var(--accent);transition:width .15s linear;
 }
+#goals-root .att-use,#goals-overlays .att-use{
+  margin-top:6px;font-family:var(--f-mono);font-size:10px;letter-spacing:.05em;color:var(--ink-3);
+}
+#goals-root .att-use.warn,#goals-overlays .att-use.warn{color:#B43C3C;font-weight:600}

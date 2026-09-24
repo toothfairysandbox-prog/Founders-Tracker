@@ -37,7 +37,7 @@ confirm you're looking at your version and not a cached one.
 | `css/contacts.css` | Styling for the contacts half. |
 | `css/shell.css` | Sidebar and topbar. |
 | `firestore.rules` | Who can read and write the database. |
-| `storage.rules` | Who can read and write uploaded files. |
+
 
 ### Two things worth knowing before you edit
 
@@ -55,34 +55,36 @@ one half needs to expose to the other goes on `window`.
 
 Three accounts. The list appears in **three** places and all three must agree:
 
-1. `firestore.rules` — the database
-2. `storage.rules` — uploaded files
+1. `firestore.rules` — the database (covers attachments too)
 3. `MEMBERS` at the top of `js/goals.js` — the app itself
 
 Changing only the app is the classic mistake: the person gets in, then every
 save silently fails.
 
-Both rules files are published from the Firebase console — Firestore → Rules and
-Storage → Rules. **Neither deploys when you push.**
+`firestore.rules` is published from the Firebase console — Firestore → Rules.
+**It does not deploy when you push.**
 
 ## File attachments
 
-Notes take PDFs, images, PowerPoint, Excel, Word, CSV, text, archives, audio
-and video — up to 50 MB each. Executables are refused.
+Notes take PDFs, images, PowerPoint, Excel, Word, CSV, text, archives, audio and
+video — up to 10 MB each. Executables are refused.
 
-The files live in Firebase Storage, in the same project as everything else, so
-there is no second service and nothing to configure in the code. The note itself
-stores only the filename, size and path, so notes stay small however many files
-hang off them.
+There is nothing to set up. Files are split into ~500 KB pieces and stored as
+Firestore documents in a `filechunks` collection, then reassembled in the browser
+when you open one. That keeps the whole app on Firebase's free tier: Storage
+would be the obvious home for files, but since late 2024 it demands a billing
+account even to use its free allowance.
 
-Download links carry an unguessable token. Who can *obtain* a link is controlled
-by `storage.rules` — the three allowed accounts — but a link, once it exists,
-works for anyone holding it and doesn't expire. To kill one: Firebase console →
-Storage → the file → Revoke access token.
+The note itself holds only the filename, size and chunk count, and a file's
+chunks are read only when someone opens it — so a note with nine attachments
+renders exactly as fast as one with none.
 
-Firebase requires the pay-as-you-go plan for Storage, with 5 GB free. For a
-handful of attachments a week the bill stays at zero; set a budget alert if you
-want to be certain.
+What this costs: 10 MB per file, and about 750 MB across everything (the free
+tier's 1 GB, less base64 overhead). The form shows total usage once you have
+files. For anything bigger, put it in Drive and paste the link into the note.
+
+If you outgrow it, `js/attachments.js` is the only file that would change —
+the rest of the app talks to it through `window.__ATT`.
 
 ## Tests
 

@@ -5,7 +5,7 @@ stop halfway nothing is broken.
 
 1. [Get the code on GitHub](#1-github) — so Garrett can make changes
 2. [Point Netlify at GitHub](#2-netlify) — so pushing publishes automatically
-3. [Switch on file uploads](#3-file-attachments-firebase-storage) — so notes can hold PDFs and decks
+3. [File attachments](#3-file-attachments) — already working, nothing to do
 
 ---
 
@@ -73,50 +73,23 @@ the deploy hasn't finished or you're looking at a cached page — Ctrl+Shift+R.
 
 ---
 
-## 3. File attachments (Firebase Storage)
+## 3. File attachments
 
-**What this gets you:** files on notes. Until this is done the app runs normally and the
-attachment box says it isn't switched on.
+Nothing to do. They work as soon as the site is up.
 
-There is nothing to configure in the code — attachments use the Firebase project you
-already have.
+Files are stored in the database you already have, so there's no second service,
+no billing account and no extra rules to publish. Notes take PDFs, images,
+PowerPoint, Excel, Word, CSV, text and media up to **10 MB each**, with about
+750 MB to share across everything. The note form shows total usage once you've
+attached something.
 
-1. **Turn on Storage.** [Firebase console](https://console.firebase.google.com) → your
-   `goal-tracker-v1` project → Build → **Storage** → Get started.
+Anything bigger than 10 MB belongs in Drive with the link pasted into the note —
+the form will tell you so if you try.
 
-2. **It will ask you to upgrade to the Blaze plan.** This is Google's doing, not a
-   change of heart on my part — since late 2024 Firebase requires a billing account for
-   Storage even though the first **5 GB is free**. You add a card; for a few PDFs a week
-   you will not be billed.
-
-   I'm not going to enter card details for you — that's yours to do.
-
-3. **Set a budget alert while you're there** so "should stay at zero" is something you
-   can verify rather than trust. In the Google Cloud console → Billing → Budgets &
-   alerts → Create budget → $1 → email yourself. Two minutes, and it means a runaway
-   never surprises you.
-
-4. **Publish the rules.** Firebase console → Storage → **Rules** tab → replace what's
-   there with the contents of `storage.rules` from the repo → **Publish**.
-
-   Skip this and uploads are refused — which is the intended behaviour, since the
-   default rules lock everything out.
-
-That's it. Reload the site and the attachment box appears on the note form.
-
-### What the rules do
-
-Only the three allowed accounts can read or write, nothing outside `notes/` is
-reachable at all, and a single file is capped at 50 MB so a hand-crafted request can't
-dump something enormous into the bucket.
-
-### One thing to know about download links
-
-A file's link carries a long random token. `storage.rules` decides who can *get* a link,
-but once a link exists it works for anyone holding it and doesn't expire. For call notes
-between the two of you that's a reasonable trade. If a particular file ever needs to be
-locked down, Firebase console → Storage → the file → **Revoke access token** kills every
-link to it immediately.
+> **Why not Firebase Storage, the obvious answer?** Google started requiring a
+> billing account for it in late 2024, even for the free 5 GB. This keeps the
+> whole app on the free tier. If you ever do add billing, swapping to Storage
+> means changing one file.
 
 ---
 
@@ -125,12 +98,11 @@ link to it immediately.
 **Adding a fourth person** means editing the allow list in **three** places, not one:
 
 - `MEMBERS` at the top of `js/goals.js`
-- `firestore.rules`
-- `storage.rules`
+- `firestore.rules` — which also covers attachments
 
 Change only the first and they'll sign in successfully to a board that refuses every
-save. And **neither rules file deploys when you push** — both are published by hand from
-the Firebase console, under Firestore → Rules and Storage → Rules.
+save. And **`firestore.rules` does not deploy when you push** — publish it by hand from
+the Firebase console, under Firestore → Rules.
 
 **Before pushing anything structural,** run the tests:
 
