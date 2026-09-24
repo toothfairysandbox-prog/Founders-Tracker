@@ -1,4 +1,4 @@
-# Setup — one time, about 30 minutes
+—# Setup — one time, about 30 minutes
 
 Three separate things. Do them in this order; each one works on its own, so if you
 stop halfway nothing is broken.
@@ -14,7 +14,7 @@ stop halfway nothing is broken.
 **What this gets you:** one shared copy of the code, a record of every change, and the
 ability for either of you to work on it without emailing files around.
 
-1. **Unzip the folder** somewhere you'll keep it — `Documents\tooth-fairy` is fine.
+1. **Unzip the folder** somewhere you'll keep it — `Documents\Founders-Tracker` is fine.
    Not Downloads; you don't want to accidentally clean it out.
 
 2. **Make a GitHub account** at [github.com/signup](https://github.com/signup) using
@@ -24,7 +24,7 @@ ability for either of you to work on it without emailing files around.
 3. **Install GitHub Desktop** from [desktop.github.com](https://desktop.github.com).
    Sign in with the account from step 2 when it asks.
 
-4. **Add the folder.** File → Add local repository → Choose → pick your `tooth-fairy`
+4. **Add the folder.** File → Add local repository → Choose → pick your `Founders-Tracker`
    folder → Add repository.
 
    It should say **"Tooth Fairy: goals + contacts in one app"** as the latest commit.
@@ -32,7 +32,7 @@ ability for either of you to work on it without emailing files around.
    unzip — that's fine, click create and carry on.
 
 5. **Publish it.** Click **Publish repository** at the top.
-   - Name: `tooth-fairy`
+   - Name: `Founders-Tracker`
    - **Untick "Keep this code private"** only if you want it public. Private is the
      better default — tick stays on.
    - Click Publish.
@@ -60,7 +60,7 @@ site updates within about a minute.
 1. Log into Netlify and open your existing site (the one on
    `delicate-duckanoo-43e1cf.netlify.app`).
 2. **Site configuration → Build & deploy → Continuous deployment → Link repository**
-3. Choose GitHub, authorise it, pick `tooth-fairy`.
+3. Choose GitHub, authorise it, pick `Founders-Tracker`.
 4. Branch `main`. Leave the build command and publish directory alone — `netlify.toml`
    in the repo already sets them.
 5. Deploy.
