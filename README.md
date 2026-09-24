@@ -14,8 +14,8 @@ First time here, or setting this up from scratch? See **[SETUP.md](SETUP.md)**.
 There is no build step. The repo *is* the site.
 
 ```
-git clone https://github.com/<account>/tooth-fairy.git
-cd tooth-fairy
+git clone https://github.com/toothfairysandbox-prog/Founders-Tracker.git
+cd Founders-Tracker
 python3 -m http.server 8000     # then open http://localhost:8000
 ```
 
