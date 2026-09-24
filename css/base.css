@@ -1,0 +1,4 @@
+/* Page-level defaults. Applies to everything. */
+  body{margin:0;font:14px system-ui,-apple-system,"Segoe UI",sans-serif;color-scheme:light dark}
+  img{max-width:100%}
+  [hidden]{display:none!important}

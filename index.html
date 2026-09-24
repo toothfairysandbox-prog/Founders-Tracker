@@ -1,0 +1,123 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Tooth Fairy — Goals &amp; Contacts</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%231D4E6B'/%3E%3Ctext x='16' y='22' font-family='system-ui' font-size='15' font-weight='700' fill='white' text-anchor='middle'%3ETF%3C/text%3E%3C/svg%3E">
+<meta name="description" content="Weekly goals and contact tracking for Samuel and Garrett.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,600;1,9..144,500&family=Manrope:wght@400;500;600;700;800&family=Archivo:wght@500;600;700&family=Source+Sans+3:ital,wght@0,400;0,600;1,400&family=IBM+Plex+Mono:wght@400;500;600&display=swap">
+<link rel="stylesheet" href="css/base.css">
+<link rel="stylesheet" href="css/contacts.css">
+<link rel="stylesheet" href="css/shell.css">
+<link rel="stylesheet" href="css/goals.css">
+</head>
+<body>
+<div id="goals-overlays">
+<div class="gate" id="gate">
+  <div class="gate-card">
+    <div class="gate-mark">
+      <span class="gate-name">Founders Week Ledger</span>
+      <span class="gate-eyebrow">Weekly goals &amp; accountability</span>
+    </div>
+    <div class="gate-body" id="gateBody">
+      <p class="gate-msg">Checking your access…</p>
+    </div>
+  </div>
+</div>
+</div>
+
+<div id="shell" hidden>
+  <aside class="sidebar" id="sidebar">
+    <button class="brand" data-action="go-home" title="Home">
+      <span class="mark">TF</span>
+      <span>
+        <div class="name">Tooth Fairy</div>
+        <div class="sub">Garrett &amp; Sam</div>
+      </span>
+    </button>
+    <div class="navsection">Goal setting</div>
+    <div class="navgroup" id="goals-nav">
+      <button class="navitem" data-gnav="samuel"><span class="ico">◐</span> Samuel</button>
+      <button class="navitem" data-gnav="both"><span class="ico">◑</span> Side by side</button>
+      <button class="navitem" data-gnav="garrett"><span class="ico">◒</span> Garrett</button>
+      <button class="navitem" data-gnav="notes"><span class="ico">✎</span> Notes</button>
+      <button class="navitem" data-gnav="build"><span class="ico">⚒</span> Build night</button>
+    </div>
+    <div class="navsection">Contacts</div>
+<div class="navgroup">
+      <button class="navitem" data-nav="home"><span class="ico">⌂</span> Home</button>
+      <button class="navitem" data-nav="contacts"><span class="ico">◆</span> Contacts <span class="count" id="nav-count-contacts"></span></button>
+      <button class="navitem" data-nav="reminders"><span class="ico">◔</span> Reminders <span class="count" id="nav-count-reminders"></span></button>
+      <button class="navitem" data-nav="calendar"><span class="ico">▦</span> Calendar</button>
+      <button class="navitem" data-nav="activity"><span class="ico">≋</span> Activity</button>
+      <button class="navitem" data-nav="industries"><span class="ico">▤</span> Industries</button>
+    </div>
+    <div class="sidebar-foot">
+      <div class="presence" id="presence-box"></div>
+      <div class="me-row" id="me-row"></div>
+      <div class="buildstamp" title="Which commit you are looking at">build __BUILD__</div>
+    </div>
+  </aside>
+
+  <div class="main">
+    <div class="topbar">
+      <button class="menubtn" data-action="toggle-sidebar" title="Toggle sidebar" aria-label="Toggle sidebar">
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M2 4h12M2 8h12M2 12h12" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
+      </button>
+      <h2 id="page-title">Home</h2>
+      <div class="spacer"></div>
+      <div class="search-box" id="global-search-wrap" hidden>
+        <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><circle cx="6" cy="6" r="4.5" stroke="currentColor" stroke-width="1.4"/><path d="M9.5 9.5L13 13" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>
+        <input id="global-search" type="text" placeholder="Search contacts…">
+      </div>
+      <button class="btn btn-primary" id="newContactBtn" data-action="new-contact">+ New contact</button>
+      <div class="idchip" id="idchip"></div>
+    </div>
+    <div class="view-root" id="view-root"></div>
+    <div id="goals-root" hidden>
+
+
+
+<div class="wrap">
+  <div class="weekbar">
+    <div class="stepper">
+      <button class="nav" id="prevWeek" aria-label="Previous week"><svg viewBox="0 0 24 24"><path d="M15 18l-6-6 6-6"/></svg></button>
+      <button class="nav" id="nextWeek" aria-label="Next week"><svg viewBox="0 0 24 24"><path d="M9 18l6-6-6-6"/></svg></button>
+    </div>
+    <div class="weeklabel">
+      <span class="num" id="weekNum"></span>
+      <span class="range" id="weekRange"></span>
+    </div>
+    <button class="today-btn" id="todayBtn" hidden>Jump to this week</button>
+    <button class="gearbtn" id="catBtn" type="button">
+      <svg viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h10"/></svg>Categories
+    </button>
+    <button class="gearbtn" id="dataBtn" type="button">
+      <svg viewBox="0 0 24 24"><path d="M12 3v12m0 0l-4-4m4 4l4-4M4 17v2a2 2 0 002 2h12a2 2 0 002-2v-2"/></svg>Backup
+    </button>
+  </div>
+
+  <div class="banner" id="banner" hidden></div>
+  <div class="scorecard" id="scorecard"></div>
+  <div class="board" id="board"></div>
+  <div class="statusline" id="statusline"></div>
+</div>
+    </div>
+  </div>
+</div>
+
+<div id="modal-root"></div>
+
+<!-- Load order matters. firebase.js and attachments.js are modules, so the
+     browser runs them after the two classic scripts below; both publish onto
+     window and the classic code checks for them before use. -->
+<script type="module" src="js/firebase.js"></script>
+<script type="module" src="js/attachments.js"></script>
+<script src="js/services.js"></script>
+<script src="js/goals.js"></script>
+<script src="js/contacts.js"></script>
+</body>
+</html>

@@ -1,0 +1,25 @@
+# Netlify: there is no build step. The repo is the site.
+# Edit a file, push to GitHub, and this is live within about a minute.
+
+[build]
+  publish = "."
+  # Not a real build — it just stamps the commit into the sidebar so you can
+  # tell at a glance whether the page in front of you is the one you pushed.
+  # Locally the stamp reads "__BUILD__", which means "not deployed".
+  command = "sed -i \"s/__BUILD__/$(echo ${COMMIT_REF:-local} | cut -c1-7)/\" index.html"
+
+# Don't publish the test harness or the docs as part of the site.
+[build.processing]
+  skip_processing = true
+
+[[headers]]
+  for = "/*"
+  [headers.values]
+    X-Content-Type-Options = "nosniff"
+    Referrer-Policy = "strict-origin-when-cross-origin"
+
+# The app is one page; anything else should land on it rather than 404.
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200

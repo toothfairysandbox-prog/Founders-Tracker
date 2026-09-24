@@ -1,0 +1,25 @@
+rules_version = '2';
+
+// Founders Week Ledger — only the listed accounts can read or write.
+//
+// These addresses must match the MEMBERS map at the top of index.html.
+// Change one, change the other.
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function isMember() {
+      return request.auth != null
+        && request.auth.token.email_verified == true
+        && request.auth.token.email.lower() in [
+             'samuelgibby89@gmail.com',
+             'garrettwoodhouse@gmail.com',
+             'toothfairysandbox@gmail.com'
+           ];
+    }
+
+    // The whole board: weeks/{week}/goals/{goal} and settings/app.
+    match /{document=**} {
+      allow read, write: if isMember();
+    }
+  }
+}
