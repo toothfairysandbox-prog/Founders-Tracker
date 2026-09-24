@@ -5,6 +5,8 @@ Sign in with Google; only three accounts are allowed in.
 
 **Live:** https://delicate-duckanoo-43e1cf.netlify.app
 
+First time here, or setting this up from scratch? See **[SETUP.md](SETUP.md)**.
+
 ---
 
 ## How to change something
