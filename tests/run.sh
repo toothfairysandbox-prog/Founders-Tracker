@@ -29,6 +29,9 @@ while [ $i -lt 40 ]; do
 done
 [ $i -lt 40 ] || { echo "server did not come up"; exit 1; }
 
+echo "── scanner rules ────────────────────────────────"
+node ttodo-logic.mjs
+echo
 echo "── app ──────────────────────────────────────────"
 node tmerge.mjs
 echo
@@ -37,3 +40,6 @@ node tatt.mjs
 echo
 echo "── crm ──────────────────────────────────────────"
 node tcrm.mjs
+echo
+echo "── to-do + documents ────────────────────────────"
+node tteam.mjs

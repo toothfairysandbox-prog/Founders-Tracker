@@ -1,0 +1,109 @@
+/* ===================== Team: To-do and Documents =====================
+   Built on the contacts look (contacts.css tokens, .panel, .btn, .seg,
+   .toolbar, .section-head). Only what those don't already cover lives here. */
+
+#shell .team-wrap{max-width:920px;margin:0 auto;}
+#shell .todo-group,#shell .doc-group{margin-bottom:22px;}
+#shell .todo-group.bad .section-head h3{color:var(--danger);}
+#shell .todo-group.dim{opacity:.85;}
+#shell .todo-scan{margin-left:auto;font-size:12px;color:var(--text-faint);}
+#shell .seg .gcount{margin-left:4px;}
+
+/* ---- a to-do ---- */
+#shell .todo-row{display:flex;align-items:flex-start;gap:12px;padding:12px 14px;}
+#shell .todo-row + .todo-row{border-top:1px solid var(--border-soft);}
+#shell .todo-check{width:18px;height:18px;margin-top:3px;flex:none;accent-color:var(--success);cursor:pointer;}
+#shell .todo-body{flex:1;min-width:0;display:flex;flex-direction:column;gap:6px;}
+#shell .todo-text{all:unset;cursor:text;font-size:14.5px;font-weight:600;line-height:1.4;color:var(--text);overflow-wrap:anywhere;}
+#shell .todo-text:hover{text-decoration:underline dotted var(--text-faint);text-underline-offset:3px;}
+#shell .todo-row.is-done .todo-text{text-decoration:line-through;color:var(--text-muted);font-weight:500;}
+#shell .todo-edit{width:100%;padding:8px 10px;border:1px solid var(--accent);border-radius:var(--radius-sm);
+  background:var(--surface);font:inherit;font-size:14.5px;resize:vertical;}
+#shell .todo-edit-actions{display:flex;gap:6px;}
+#shell .todo-meta{display:flex;flex-wrap:wrap;align-items:center;gap:6px;}
+#shell .todo-sel{appearance:none;-webkit-appearance:none;border:1px solid transparent;border-radius:999px;
+  padding:3px 10px;font-size:11.5px;font-weight:700;cursor:pointer;background:var(--surface-3);color:var(--text-muted);}
+#shell .todo-sel:hover{border-color:var(--border);}
+#shell .todo-sel.owner-garrett{background:var(--success-soft);color:var(--success);}
+#shell .todo-sel.owner-samuel{background:var(--accent-soft);color:var(--accent-soft-ink);}
+#shell .todo-sel.owner-both{background:var(--warning-soft);color:var(--warning);}
+#shell .todo-sel.pri-high{background:var(--danger-soft);color:var(--danger);}
+#shell .todo-sel.pri-low{opacity:.75;}
+#shell .todo-due{position:relative;display:inline-flex;align-items:center;font-size:12px;font-weight:600;
+  color:var(--text-muted);padding:3px 8px;border-radius:999px;cursor:pointer;}
+#shell .todo-due:hover{background:var(--surface-3);}
+#shell .todo-due .dim{color:var(--text-faint);font-weight:500;}
+#shell .todo-due.overdue{color:var(--danger);background:var(--danger-soft);}
+/* The native picker does the work; the label is what you see. */
+#shell .todo-due input{position:absolute;inset:0;opacity:0;cursor:pointer;width:100%;}
+#shell .todo-src{display:flex;flex-wrap:wrap;align-items:baseline;gap:6px;font-size:12px;color:var(--text-faint);}
+#shell .todo-src a{color:var(--text-muted);font-weight:600;text-decoration:none;}
+#shell .todo-src a:hover{text-decoration:underline;}
+#shell .todo-src q{font-style:italic;color:var(--text-muted);flex-basis:100%;padding-left:22px;overflow-wrap:anywhere;}
+#shell .src-k{width:16px;height:16px;border-radius:4px;display:inline-grid;place-items:center;font-size:9.5px;
+  font-weight:800;color:#fff;background:var(--text-faint);flex:none;align-self:center;}
+#shell .src-slack{background:#611f69;}
+#shell .src-gmail{background:#c5221f;}
+#shell .src-claude{background:#c15f3c;}
+#shell .src-aspen{background:#1F8A5F;}
+#shell .todo-done{font-size:12px;color:var(--success);font-weight:600;}
+#shell .todo-del{flex:none;opacity:.45;}
+#shell .todo-row:hover .todo-del{opacity:1;}
+#shell .todo-del:hover{color:var(--danger);}
+
+.team-toast{position:fixed;bottom:22px;left:50%;transform:translateX(-50%);display:flex;align-items:center;gap:14px;
+  background:var(--text);color:var(--surface);padding:11px 16px;border-radius:10px;font:700 13px var(--font-ui);
+  z-index:100;box-shadow:var(--shadow-md);max-width:min(460px,calc(100vw - 32px));}
+.team-toast button{background:none;border:none;color:inherit;font:inherit;text-decoration:underline;cursor:pointer;padding:0;}
+
+/* ---- documents ---- */
+#shell .doc-drop{display:flex;flex-wrap:wrap;align-items:center;gap:12px;padding:16px;margin-bottom:16px;
+  border:1.5px dashed var(--border);background:var(--surface);}
+#shell .doc-drop.over{border-color:var(--accent);background:var(--accent-soft);}
+#shell .doc-drop-main{flex:1;min-width:220px;display:flex;flex-direction:column;gap:3px;}
+#shell .doc-drop-main .hint{font-size:12.5px;color:var(--text-faint);}
+#shell .doc-drop-ctrl{display:flex;gap:8px;align-items:center;}
+#shell .doc-drop-ctrl select,#shell .doc-cat{padding:7px 9px;border:1px solid var(--border);border-radius:var(--radius-sm);
+  background:var(--surface);font-size:12.5px;}
+#shell #docs-uploads{flex-basis:100%;display:flex;flex-direction:column;gap:6px;}
+#shell #docs-uploads:empty{display:none;}
+#shell .doc-up{display:flex;align-items:center;gap:10px;font-size:12.5px;}
+#shell .doc-up span:first-child{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+#shell .doc-up .bar{width:140px;height:6px;border-radius:3px;background:var(--surface-3);overflow:hidden;}
+#shell .doc-up .bar i{display:block;height:100%;background:var(--accent);transition:width .2s;}
+#shell .doc-chips{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:12px;}
+#shell .doc-chip{border:1px solid var(--border);background:var(--surface);border-radius:999px;padding:5px 12px;
+  font-size:12.5px;font-weight:700;color:var(--text-muted);cursor:pointer;}
+#shell .doc-chip.active{background:var(--accent);border-color:var(--accent);color:var(--accent-ink);}
+#shell .doc-chip.active .gcount{color:inherit;background:transparent;}
+#shell .doc-chip.ghost{border-style:dashed;}
+#shell #docs-search{flex:1;min-width:180px;}
+#shell .doc-cats{padding:8px 12px;margin-bottom:16px;}
+#shell .doc-cat-row{display:flex;align-items:center;gap:8px;padding:6px 0;}
+#shell .doc-cat-row + .doc-cat-row{border-top:1px solid var(--border-soft);}
+#shell .doc-cat-row .nm{flex:1;font-weight:600;font-size:13.5px;}
+#shell .doc-cat-row input{flex:1;padding:7px 9px;border:1px solid var(--border);border-radius:7px;background:var(--surface);font-size:13px;}
+#shell .doc-row{display:flex;align-items:center;gap:12px;padding:11px 14px;}
+#shell .doc-row + .doc-row{border-top:1px solid var(--border-soft);}
+#shell .doc-kind{flex:none;min-width:58px;text-align:center;font-size:10.5px;font-weight:800;letter-spacing:.03em;
+  text-transform:uppercase;padding:4px 6px;border-radius:6px;background:var(--surface-3);color:var(--text-muted);}
+#shell .doc-kind.k-pdf{background:var(--danger-soft);color:var(--danger);}
+#shell .doc-kind.k-doc{background:var(--accent-soft);color:var(--accent-soft-ink);}
+#shell .doc-kind.k-sheet{background:var(--success-soft);color:var(--success);}
+#shell .doc-kind.k-image{background:var(--warning-soft);color:var(--warning);}
+#shell .doc-main{flex:1;min-width:0;}
+#shell .doc-name{all:unset;cursor:pointer;font-weight:700;font-size:14px;color:var(--text);display:block;
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:100%;}
+#shell .doc-name:hover{color:var(--accent);text-decoration:underline;}
+#shell .doc-rename{width:100%;padding:6px 8px;border:1px solid var(--accent);border-radius:7px;background:var(--surface);font:inherit;font-size:14px;}
+#shell .doc-sub{font-size:12px;color:var(--text-faint);margin-top:2px;}
+#shell .doc-acts{display:flex;align-items:center;gap:4px;flex:none;}
+
+@media (max-width:700px){
+  #shell .todo-scan{margin-left:0;flex-basis:100%;}
+  #shell .doc-row{flex-wrap:wrap;}
+  #shell .doc-main{flex-basis:calc(100% - 70px);}
+  #shell .doc-cat{margin-left:70px;}
+  #shell .doc-acts{margin-left:auto;}
+  #shell .doc-up .bar{width:80px;}
+}

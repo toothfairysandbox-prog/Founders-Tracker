@@ -41,7 +41,16 @@
     getDoc: (r) => Promise.resolve(mkDoc(r.__doc)),
     getDocs: (q) => Promise.resolve(runQuery(q.col ? q : { col: q.__col, cons: [] })),
     setDoc: (r, d) => { store[r.__doc] = JSON.parse(JSON.stringify(d)); notify(); return Promise.resolve(); },
-    updateDoc: (r, d) => { store[r.__doc] = Object.assign({}, store[r.__doc], JSON.parse(JSON.stringify(d))); notify(); return Promise.resolve(); },
+    /* "locked.text": true sets a nested field, as real Firestore does. */
+    updateDoc: (r, d) => {
+      const next = JSON.parse(JSON.stringify(store[r.__doc] || {}));
+      for (const [k, v] of Object.entries(JSON.parse(JSON.stringify(d)))) {
+        const path = k.split('.'); let o = next;
+        while (path.length > 1) { const p = path.shift(); o = (o[p] = (o[p] && typeof o[p] === 'object') ? o[p] : {}); }
+        o[path[0]] = v;
+      }
+      store[r.__doc] = next; notify(); return Promise.resolve();
+    },
     addDoc: (ref, d) => { const id = 'x' + (++seq); store[ref.__col + '/' + id] = JSON.parse(JSON.stringify(d)); notify(); return Promise.resolve({ id }); },
     deleteDoc: (r) => { delete store[r.__doc]; notify(); return Promise.resolve(); },
     onSnapshot: (target, next) => {

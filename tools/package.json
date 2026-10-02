@@ -1,0 +1,7 @@
+{
+  "name": "tooth-fairy-tools",
+  "private": true,
+  "type": "module",
+  "description": "The To-do scanner's database script. Runs on Garrett's Mac, not on the site.",
+  "dependencies": { "firebase-admin": "^13.0.0" }
+}

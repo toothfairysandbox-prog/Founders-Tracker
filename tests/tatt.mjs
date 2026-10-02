@@ -11,6 +11,8 @@ const SITE = process.env.SITE_URL || 'http://localhost:8101';
 const b = await chromium.launch(process.env.CHROMIUM_PATH ? { executablePath: process.env.CHROMIUM_PATH } : {});
 const ctx = await b.newContext({ viewport: { width: 1400, height: 1000 } });
 await ctx.addInitScript(FAKE);
+/* The real Firebase SDK would load from gstatic and replace the fake. */
+await ctx.route(/gstatic\.com\/firebasejs/, r => r.abort());
 const p = await ctx.newPage();
 const errs = [];
 p.on('pageerror', e => errs.push('PAGEERROR ' + String(e)));
@@ -95,7 +97,7 @@ await p.waitForTimeout(600);
 ok('3 .exe refused', /blocked/i.test(await p.$eval('.att-err', n => n.textContent).catch(() => '')));
 ok('3b nothing extra uploaded', (await fids()).length === 4);
 
-const HUGE = '/tmp/claude-0/huge11.zip';
+const HUGE = (process.env.TMPDIR || '/tmp').replace(/\/$/, '') + '/huge11.zip';
 if (!fs.existsSync(HUGE)) fs.writeFileSync(HUGE, Buffer.alloc(11 * 1024 * 1024, 1));
 await p.setInputFiles('#attInput', HUGE);
 await p.waitForTimeout(1500);

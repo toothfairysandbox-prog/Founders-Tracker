@@ -1,6 +1,7 @@
-# Tooth Fairy — Goals & Contacts
+# Tooth Fairy — Goals, Contacts, To-dos & Documents
 
-Weekly goal tracking and contact tracking for Samuel and Garrett, in one app.
+Weekly goal tracking, contact tracking, a shared to-do list and a document
+store for Samuel and Garrett, in one app.
 Sign in with Google; only three accounts are allowed in.
 
 **Live:** https://delicate-duckanoo-43e1cf.netlify.app
@@ -35,7 +36,11 @@ confirm you're looking at your version and not a cached one.
 | `js/attachments.js` | File uploads on notes. Size cap and allowed types live here. |
 | `css/goals.css` | Styling for the goals half. |
 | `css/contacts.css` | Styling for the contacts half. |
+| `js/todos.js` | The To-do tab. Tasks the scanner finds, plus check off / edit / delete. |
+| `js/documents.js` | The Documents tab. Uploads reuse `attachments.js`. |
+| `css/team.css` | Styling for To-do and Documents. |
 | `css/shell.css` | Sidebar and topbar. |
+| `tools/` | The To-do scanner's scripts. Run on Garrett's Mac, not part of the site. See [tools/README.md](tools/README.md). |
 | `firestore.rules` | Who can read and write the database. |
 
 
@@ -107,3 +112,22 @@ Both run against fakes, so they never touch the real database or real storage.
 The Backup button on the goals board exports everything — goals, notes,
 categories — as JSON you can paste back in. It does **not** include the uploaded
 files themselves, only the references to them.
+
+## To-do
+
+Twice a day (7 AM and 9 PM) a scheduled Claude task on Garrett's Mac reads the
+Tooth Fairy Slack, Gmail and Claude chats, adds any new tasks to the To-do tab
+and checks off ones that are clearly done. How that works, and the one-time key
+setup it needs, is in [tools/README.md](tools/README.md).
+
+On the page: click a task's text to edit it, change owner / priority / due date
+in place, untick something the scanner checked off by mistake, or ✕ to delete a
+task that isn't real. Whatever you change, the scanner leaves alone after that,
+and deleted tasks never come back.
+
+## Documents
+
+Shared files: BAAs, agreements, vendor contracts. Same storage and limits as note
+attachments (10 MB a file, ~750 MB shared between both). Three starting categories
+(Legal & compliance, Customers, Vendors) that you can rename, delete or add to.
+**No patient records** — a BAA is fine, PHI is not.
