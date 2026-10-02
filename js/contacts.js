@@ -3,8 +3,68 @@
 (function(){
 'use strict';
 
-var STAGE_LABEL = {contacted:"Contacted", connected:"Connected"};
+/* ---------------------------------------------------------------------------
+   The pipeline. Ordered, and each contact sits in exactly one stage.
+   Things that are NOT stages, on purpose:
+     · "follow-up scheduled" — a contact can have one at any stage. It's an open
+       reminder, and it shows as a marker on the row.
+     · "not interested"      — an exit, not a position. See LOST_REASONS below;
+       a lost contact leaves the pipeline but keeps its history.
+--------------------------------------------------------------------------- */
+var STAGES = [
+  { id:"contacted",  label:"Contacted",  hint:"Reached out, nothing back yet" },
+  { id:"interested", label:"Interested", hint:"They replied and want to hear more" },
+  { id:"pilot",      label:"Pilot",      hint:"Trying it in the practice" },
+  { id:"closed",     label:"Closed",     hint:"Signed and paying" },
+  { id:"onboarded",  label:"Onboarded",  hint:"Live and using it day to day" }
+];
+var STAGE_LABEL = {};
+var STAGE_ORDER = {};
+STAGES.forEach(function(s, i){ STAGE_LABEL[s.id] = s.label; STAGE_ORDER[s.id] = i; });
+
+/* Contacts created before the pipeline existed carry stage "connected", which
+   meant "we've actually spoken". That's what Interested means now. Nothing is
+   rewritten in the database — the value is translated on read, and the new one
+   is saved the next time that contact is touched for another reason. */
+var LEGACY_STAGE = { connected: "interested" };
+function stageOf(c){
+  var s = (c && c.stage) || "contacted";
+  s = LEGACY_STAGE[s] || s;
+  return STAGE_LABEL[s] ? s : "contacted";
+}
+function stageIndex(c){ return STAGE_ORDER[stageOf(c)]; }
+
+/* Why a contact went cold. Thin on purpose — a list nobody can be bothered to
+   pick from gets "other" every time, and then it tells you nothing. */
+var LOST_REASONS = [
+  { id:"no_response",   label:"Never responded" },
+  { id:"too_expensive", label:"Price" },
+  { id:"has_software",  label:"Already has something" },
+  { id:"too_small",     label:"Practice too small" },
+  { id:"bad_timing",    label:"Bad timing — revisit later" },
+  { id:"not_a_fit",     label:"Not a fit" },
+  { id:"other",         label:"Other" }
+];
+var LOST_REASON_LABEL = {};
+LOST_REASONS.forEach(function(r){ LOST_REASON_LABEL[r.id] = r.label; });
+
+/* A contact with nothing scheduled and no activity for this long is the thing
+   most likely to quietly cost you a deal. */
+var STALE_DAYS = 14;
+
 var CALL_TYPE_LABEL = {call:"Call", video:"Video meeting", in_person:"In person", other:"Other"};
+
+/* What an action item actually is, so "what's next" can be read at a glance
+   rather than parsed out of free text. */
+var ACTION_KINDS = [
+  { id:"call",    label:"Call",    verb:"Call" },
+  { id:"text",    label:"Text",    verb:"Text" },
+  { id:"email",   label:"Email",   verb:"Email" },
+  { id:"meeting", label:"Meeting", verb:"Meet" },
+  { id:"other",   label:"Other",   verb:"Do" }
+];
+var ACTION_KIND_LABEL = {};
+ACTION_KINDS.forEach(function(k){ ACTION_KIND_LABEL[k.id] = k.label; });
 
 var state = {
   me: null,
@@ -25,8 +85,14 @@ var state = {
   peers: [],
   search: "",
   industryFilter: "",
-  sortBy: "name",
+  stageFilter: "",
+  ownerFilter: "",
+  showLost: false,
+  sortBy: "touched",   /* opens on the quietest contacts, not alphabetically */
+  sortDesc: false,
   contactsView: "list",
+  losingContact: null,  /* contact id while the "why" prompt is open */
+  actionsMineOnly: false,
   calMonth: (function(){ var d=new Date(); d.setDate(1); return d; })(),
   calSelected: null,
   profileCache: {},
@@ -343,12 +409,19 @@ async function createContact(data){
   var ref = await db.collection("contacts").add({
     name: data.name, title: data.title||"", company: data.company||"",
     phone: data.phone||"", email: data.email||"", linkedin: data.linkedin||"",
-    industryId: data.industryId || null, positionId: data.positionId || null, ownerId: data.ownerId || null,
+    industryId: data.industryId || null, positionId: data.positionId || null,
+    /* Default the owner to whoever is adding them. An unowned contact at this
+       volume is one neither of you believes is yours. */
+    ownerId: data.ownerId || state.me.id,
     stage: data.stage || "contacted", archived: false,
-    createdBy: state.me.id, createdAt: now, updatedBy: state.me.id, updatedAt: now
+    lost: false, lostReason: null,
+    value: (function(){ var n = Number(data.value); return isFinite(n) && n > 0 ? Math.round(n) : null; })(),
+    createdBy: state.me.id, createdAt: now, updatedBy: state.me.id, updatedAt: now,
+    lastTouchedAt: now
   });
   await db.collection("reminders").add({
     contactId: ref.id, text: data.nextStep, dueAt: data.dueAt,
+    kind: data.kind || "call",
     assigneeId: data.assigneeId || state.me.id, status: "scheduled",
     createdBy: state.me.id, createdAt: now
   });
@@ -362,11 +435,62 @@ async function updateContact(id, patch, contactName, summary){
   await logActivity("updated", {contactId:id, contactName:contactName, entityId:id, summary: summary || ("updated "+contactName)});
 }
 
-async function changeStage(contact, newStage){
-  if(contact.stage === newStage) return;
-  await db.collection("contacts").doc(contact.id).update({stage:newStage, updatedBy:state.me.id, updatedAt:new Date().toISOString()});
-  await logActivity("stage_changed", {contactId:contact.id, contactName:contact.name, entityId:contact.id,
-    summary: "moved "+contact.name+" to "+STAGE_LABEL[newStage]});
+/* Every write that represents real work goes through here, so "when did anyone
+   last do anything with this practice" is one field rather than a guess. */
+function touchPatch(extra){
+  var now = new Date().toISOString();
+  return Object.assign({ lastTouchedAt: now, updatedBy: state.me.id, updatedAt: now }, extra || {});
+}
+
+async function changeStage(contact, newStage, opts){
+  opts = opts || {};
+  var from = stageOf(contact);
+  if(from === newStage && contact.stage === newStage) return;
+  /* Writing stage unconditionally also quietly upgrades a legacy "connected"
+     record to its new name the first time anyone touches it. */
+  await db.collection("contacts").doc(contact.id).update(touchPatch({ stage: newStage }));
+  if(from !== newStage){
+    await logActivity("stage_changed", {contactId:contact.id, contactName:contact.name, entityId:contact.id,
+      summary: (opts.because ? opts.because + " — " : "") +
+               "moved " + contact.name + " from " + STAGE_LABEL[from] + " to " + STAGE_LABEL[newStage]});
+  }
+}
+
+/* Marking a contact lost takes them out of the pipeline, cancels whatever was
+   scheduled, and records why. The reason is the point: a year of these is the
+   most honest product feedback you will get. */
+async function markLost(contact, reasonId, note){
+  await db.collection("contacts").doc(contact.id).update(touchPatch({
+    lost: true, lostReason: reasonId, lostNote: note || "",
+    lostAt: new Date().toISOString(), lostBy: state.me.id
+  }));
+  await Promise.all(openReminders(contact.id).map(function(r){
+    return db.collection("reminders").doc(r.id).update({
+      status:"cancelled", completedBy:state.me.id, completedAt:new Date().toISOString()
+    });
+  }));
+  await logActivity("marked_lost", {contactId:contact.id, contactName:contact.name, entityId:contact.id,
+    summary:"marked "+contact.name+" not interested ("+(LOST_REASON_LABEL[reasonId]||reasonId)+")"});
+}
+async function reviveContact(contact){
+  await db.collection("contacts").doc(contact.id).update(touchPatch({
+    lost: false, lostReason: null, lostNote: "", lostAt: null
+  }));
+  await logActivity("revived", {contactId:contact.id, contactName:contact.name, entityId:contact.id,
+    summary:"put "+contact.name+" back in the pipeline"});
+}
+async function setOwner(contact, ownerId){
+  await db.collection("contacts").doc(contact.id).update(touchPatch({ ownerId: ownerId || null }));
+  await logActivity("owner_changed", {contactId:contact.id, contactName:contact.name, entityId:contact.id,
+    summary: ownerId ? (profileName(ownerId, state.profileCache)+" now owns "+contact.name)
+                     : (contact.name+" has no owner")});
+}
+async function setValue(contact, value){
+  var n = Number(value);
+  var clean = isFinite(n) && n > 0 ? Math.round(n) : null;
+  await db.collection("contacts").doc(contact.id).update(touchPatch({ value: clean }));
+  await logActivity("value_changed", {contactId:contact.id, contactName:contact.name, entityId:contact.id,
+    summary: clean ? ("set "+contact.name+" to "+fmtMoney(clean)+"/mo") : ("cleared the value on "+contact.name)});
 }
 
 async function archiveContact(contact){
@@ -386,22 +510,47 @@ async function addNote(contactId, contactName, title, bodyHtml){
   await logActivity("note_added", {contactId:contactId, contactName:contactName, entityId:contactId, summary:'added a note ("'+title+'") on '+contactName});
 }
 
+/* What happened on the call, and where that puts them. This is the whole
+   anti-rot mechanism: you record the outcome, the stage follows. Nobody has to
+   remember to go and move a card afterwards, because nobody ever does. */
+var CALL_OUTCOMES = [
+  { id:"no_answer",  label:"No answer / left a message", stage:null         },
+  { id:"spoke",      label:"Spoke — wants to hear more", stage:"interested" },
+  { id:"pilot",      label:"Agreed to try it",           stage:"pilot"      },
+  { id:"signed",     label:"Signed up",                  stage:"closed"     },
+  { id:"live",       label:"They're up and running",     stage:"onboarded"  },
+  { id:"not_now",    label:"Not interested",             stage:null, lost:true }
+];
+var CALL_OUTCOME = {};
+CALL_OUTCOMES.forEach(function(o){ CALL_OUTCOME[o.id] = o; });
+
 async function logCall(contact, data){
   await db.collection("calls").add({
     contactId: contact.id, type: data.type, occurredAt: data.occurredAt,
     durationMinutes: Number(data.durationMinutes)||0, notes: data.notes||"",
+    outcome: data.outcome || null,
     createdBy: state.me.id, createdAt: new Date().toISOString()
   });
-  if(contact.stage !== "connected"){
-    await db.collection("contacts").doc(contact.id).update({stage:"connected", updatedBy:state.me.id, updatedAt:new Date().toISOString()});
-  }
+  var out = CALL_OUTCOME[data.outcome];
+  /* Always a touch, even for a no-answer — trying and failing to reach someone
+     is still contact, and it should stop them showing up as neglected. */
+  await db.collection("contacts").doc(contact.id).update(touchPatch({}));
   await logActivity("call_logged", {contactId:contact.id, contactName:contact.name, entityId:contact.id,
-    summary: "logged a "+CALL_TYPE_LABEL[data.type]+" with "+contact.name});
+    summary: "logged a "+CALL_TYPE_LABEL[data.type]+" with "+contact.name +
+             (out ? " — "+out.label.toLowerCase() : "")});
+
+  /* Only ever move forward. A later call that goes badly shouldn't quietly
+     demote someone who has already signed; that's what "not interested" is for. */
+  if(out && out.stage && STAGE_ORDER[out.stage] > stageIndex(contact)){
+    await changeStage(contact, out.stage, {because:"from a logged "+CALL_TYPE_LABEL[data.type].toLowerCase()});
+  }
+  return out && out.lost ? "ask_lost_reason" : null;
 }
 
 async function createReminder(contact, data){
   await db.collection("reminders").add({
     contactId: contact.id, text: data.text, dueAt: data.dueAt,
+    kind: data.kind || "call",
     assigneeId: data.assigneeId || state.me.id, status:"scheduled",
     createdBy: state.me.id, createdAt: new Date().toISOString()
   });
@@ -485,8 +634,84 @@ function reminderStatusPill(dueAt){
   if(soon) return '<span class="pill pill-soon">Due soon</span>';
   return '<span class="pill pill-later">Upcoming</span>';
 }
+/* ---------------------------------------------------------------------------
+   Derived facts about a contact. All computed, none stored twice — a number
+   kept in two places is a number that will disagree with itself.
+--------------------------------------------------------------------------- */
+
+/* The most recent moment anyone did anything with this contact. lastTouchedAt
+   is written whenever work is logged; older records predate it, so fall back to
+   whatever evidence exists rather than showing a contact as untouched forever. */
+function lastTouch(c){
+  var best = c.lastTouchedAt || c.updatedAt || c.createdAt || null;
+  for(var i=0;i<state.activity.length;i++){
+    var a = state.activity[i];
+    if(a.contactId === c.id && a.createdAt && (!best || a.createdAt > best)) best = a.createdAt;
+  }
+  return best;
+}
+function daysSince(iso){
+  if(!iso) return null;
+  return Math.floor((Date.now() - new Date(iso).getTime()) / 86400000);
+}
+function openReminders(contactId){
+  return state.reminders.filter(function(r){
+    return r.contactId === contactId && r.status === "scheduled";
+  });
+}
+/* Gone quiet: no open action item, nothing logged for a fortnight, and still
+   somewhere in the pipeline where silence is a problem. A contact who's
+   onboarded isn't stale, they're just happy; one marked lost isn't either. */
+function isStale(c){
+  if(c.archived || c.lost) return false;
+  if(stageOf(c) === "onboarded") return false;
+  if(openReminders(c.id).length) return false;
+  var d = daysSince(lastTouch(c));
+  return d !== null && d >= STALE_DAYS;
+}
+function staleContacts(){
+  return state.contacts.filter(isStale).sort(function(a,b){
+    return (daysSince(lastTouch(b))||0) - (daysSince(lastTouch(a))||0);
+  });
+}
+
+/* Value is optional, so every total has to survive most contacts not having one. */
+function contactValue(c){
+  var n = Number(c.value);
+  return isFinite(n) && n > 0 ? n : 0;
+}
+function fmtMoney(n){
+  if(!n) return "";
+  return "$" + Math.round(n).toLocaleString();
+}
+/* Contacts in the pipeline: not archived, not lost. Lost contacts stay in the
+   database and in search, but they don't inflate a single number anywhere. */
+function pipelineContacts(){
+  return state.contacts.filter(function(c){ return !c.archived && !c.lost; });
+}
+function pipelineByStage(list){
+  var out = {};
+  STAGES.forEach(function(s){ out[s.id] = { count:0, value:0, contacts:[] }; });
+  (list || pipelineContacts()).forEach(function(c){
+    var b = out[stageOf(c)];
+    b.count++; b.value += contactValue(c); b.contacts.push(c);
+  });
+  return out;
+}
+
 function visibleContacts(){
   var list = state.contacts.filter(function(c){ return !c.archived; });
+  /* Lost contacts are hidden by default but never deleted — the reasons are
+     worth more than the contacts were. */
+  if(!state.showLost) list = list.filter(function(c){ return !c.lost; });
+  if(state.stageFilter){
+    list = list.filter(function(c){ return stageOf(c) === state.stageFilter; });
+  }
+  if(state.ownerFilter){
+    list = state.ownerFilter === "__none"
+      ? list.filter(function(c){ return !c.ownerId; })
+      : list.filter(function(c){ return c.ownerId === state.ownerFilter; });
+  }
   if(state.industryFilter){
     list = list.filter(function(c){ return c.industryId === state.industryFilter; });
   }
@@ -499,13 +724,43 @@ function visibleContacts(){
         (c.title||"").toLowerCase().indexOf(q)>-1;
     });
   }
+  var dir = state.sortDesc ? -1 : 1;
   list = list.slice().sort(function(a,b){
-    if(state.sortBy === "name") return (a.name||"").localeCompare(b.name||"");
-    if(state.sortBy === "recent") return new Date(b.createdAt)-new Date(a.createdAt);
-    if(state.sortBy === "company") return (a.company||"").localeCompare(b.company||"");
-    return 0;
+    switch(state.sortBy){
+      case "name":    return dir * (a.name||"").localeCompare(b.name||"");
+      case "company": return dir * (a.company||"").localeCompare(b.company||"");
+      case "recent":  return dir * (new Date(b.createdAt) - new Date(a.createdAt));
+      case "stage":   return dir * (stageIndex(a) - stageIndex(b) ||
+                                    (a.name||"").localeCompare(b.name||""));
+      case "value":   return dir * (contactValue(b) - contactValue(a));
+      case "owner":   return dir * (ownerName(a.ownerId)||"~").localeCompare(ownerName(b.ownerId)||"~");
+      /* Quietest first — this column exists to find neglect, so the useful end
+         of it should be the top. */
+      case "touched": return dir * ((daysSince(lastTouch(b))||0) - (daysSince(lastTouch(a))||0));
+      case "due": {
+        var ra = openReminders(a.id)[0], rb = openReminders(b.id)[0];
+        if(!ra && !rb) return 0;
+        if(!ra) return 1;          /* nothing scheduled sinks, either direction */
+        if(!rb) return -1;
+        return dir * (new Date(ra.dueAt) - new Date(rb.dueAt));
+      }
+      default: return 0;
+    }
   });
   return list;
+}
+/* An unresolved profile falls back to the word "Teammate", which turns into a
+   "T" badge and reads like a real person's initial. Show "?" instead so an
+   unknown owner looks unknown. */
+function whoInitials(id, cache){
+  if(!id) return "\u2013";
+  var p = (cache && cache[id]) || state.profileCache[id];
+  return (p && p.name) ? initialsOf(p.name) : "?";
+}
+function ownerName(id){
+  if(!id) return "";
+  var p = state.profileCache[id];
+  return (p && p.name) || "";
 }
 function industryName(id){
   if(!id) return "Uncategorized";
@@ -548,7 +803,7 @@ async function render(){
   var v = state.route.view;
   if(v==="home") title="Home";
   else if(v==="contacts") title="Contacts";
-  else if(v==="reminders") title="Reminders";
+  else if(v==="reminders") title="Action items";
   else if(v==="calendar") title="Calendar";
   else if(v==="activity") title="Activity";
   else if(v==="industries") title="Industries";
@@ -687,9 +942,9 @@ async function renderHome(){
     '</div>';
   }).join("") + '</div>' : '<div class="panel empty">No open follow-ups. Nice and caught up.</div>';
 
-  var contacted = list.filter(function(c){return c.stage==="contacted";}).length;
-  var connected = list.filter(function(c){return c.stage==="connected";}).length;
-  var total = contacted+connected || 1;
+  var buckets = pipelineByStage(list.filter(function(c){ return !c.lost; }));
+  var pipeTotal = STAGES.reduce(function(n,s){ return n + buckets[s.id].count; }, 0) || 1;
+  var quiet = staleContacts().length;
 
   return (
     '<div class="grid-cards">' +
@@ -701,11 +956,12 @@ async function renderHome(){
     '<div class="section">' +
       '<div class="section-head"><h3>Pipeline</h3><a class="link" data-nav="contacts" data-contacts-view="board">View board</a></div>' +
       '<div class="panel" style="padding:16px 18px;">' +
-        '<div style="display:flex;justify-content:space-between;font-size:12.5px;color:var(--text-muted);margin-bottom:6px;"><span>Contacted '+contacted+'</span><span>Connected '+connected+'</span></div>' +
-        '<div style="height:8px;border-radius:999px;background:var(--warning-soft);overflow:hidden;display:flex;">' +
-          '<div style="width:'+(contacted/total*100)+'%;background:var(--warning);"></div>' +
-          '<div style="width:'+(connected/total*100)+'%;background:var(--success);"></div>' +
-        '</div>' +
+        '<div class="mini-pipe">' + STAGES.map(function(st){
+          var b = buckets[st.id];
+          return '<button class="mp" data-action="filter-stage" data-stage="'+st.id+'" title="'+esc(st.hint)+'">' +
+            '<span class="mp-bar s-'+st.id+'" style="width:'+Math.round(b.count/pipeTotal*100)+'%"></span>' +
+            '<span class="mp-n">'+b.count+'</span><span class="mp-l">'+esc(st.label)+'</span></button>';
+        }).join("") + '</div>' +
       '</div>' +
     '</div>' +
     '<div class="section">' +
@@ -724,70 +980,166 @@ function statCard(big, lbl){
 async function renderContacts(){
   var list = visibleContacts();
   var ids = [];
-  list.forEach(function(c){ if(c.ownerId) ids.push(c.ownerId); if(c.createdBy) ids.push(c.createdBy); });
+  state.contacts.forEach(function(c){ if(c.ownerId) ids.push(c.ownerId); if(c.createdBy) ids.push(c.createdBy); });
   var profiles = await resolveProfiles(ids);
 
+  var toolbar = contactsToolbar(list, profiles);
+  if(state.contactsView === "board") return toolbar + pipelineSummaryHtml();
+
+  var stale = staleContacts();
+  var staleBanner = "";
+  /* Above the table, not buried in it. Neglect is the thing you most need to
+     see and the thing you are least likely to go looking for. */
+  if(stale.length && !state.stageFilter && !state.search){
+    staleBanner =
+      '<div class="gone-quiet">' +
+        '<div class="gq-head">' +
+          '<strong>' + stale.length + ' gone quiet</strong>' +
+          '<span>No activity for ' + STALE_DAYS + '+ days and nothing scheduled</span>' +
+          '<button class="btn btn-sm" data-action="sort-stale">Show them</button>' +
+        '</div>' +
+        '<div class="gq-names">' +
+          stale.slice(0, 6).map(function(c){
+            return '<button class="gq-chip" data-action="open-preview" data-id="' + c.id + '">' +
+              esc(c.name) + ' <em>' + daysSince(lastTouch(c)) + 'd</em></button>';
+          }).join("") +
+          (stale.length > 6 ? '<span class="gq-more">+' + (stale.length - 6) + ' more</span>' : '') +
+        '</div>' +
+      '</div>';
+  }
+
+  if(list.length === 0){
+    return toolbar + staleBanner +
+      '<div class="panel empty"><div class="big-ico">\u25c6</div>' +
+      (state.contacts.length ? 'Nothing matches those filters.' : 'No contacts yet.') + '</div>';
+  }
+  return toolbar + staleBanner + contactsTableHtml(list, profiles);
+}
+
+function contactsToolbar(list, profiles){
   var indOpts = '<option value="">All industries</option>' + state.industries.map(function(i){
     return '<option value="'+i.id+'" '+(state.industryFilter===i.id?"selected":"")+'>'+esc(i.name)+'</option>';
   }).join("");
 
-  var toolbar =
-    '<div class="toolbar">' +
+  var owners = {};
+  state.contacts.forEach(function(c){ if(c.ownerId) owners[c.ownerId] = true; });
+  var ownerOpts = '<option value="">Anyone\u2019s</option>' +
+    Object.keys(owners).map(function(id){
+      return '<option value="'+id+'" '+(state.ownerFilter===id?"selected":"")+'>'+
+        esc(profileName(id, state.profileCache) || "Unknown")+'</option>';
+    }).join("") +
+    '<option value="__none" '+(state.ownerFilter==="__none"?"selected":"")+'>Unowned</option>';
+
+  var stageOpts = '<option value="">All stages</option>' + STAGES.map(function(s){
+    return '<option value="'+s.id+'" '+(state.stageFilter===s.id?"selected":"")+'>'+esc(s.label)+'</option>';
+  }).join("");
+
+  var lostCount = state.contacts.filter(function(c){ return c.lost && !c.archived; }).length;
+
+  return '<div class="toolbar">' +
+      '<select id="stage-filter" title="Pipeline stage">'+stageOpts+'</select>' +
+      '<select id="owner-filter" title="Who owns it">'+ownerOpts+'</select>' +
       '<select id="industry-filter">'+indOpts+'</select>' +
-      '<select id="sort-by">' +
-        '<option value="name" '+(state.sortBy==="name"?"selected":"")+'>Sort: Name</option>' +
-        '<option value="recent" '+(state.sortBy==="recent"?"selected":"")+'>Sort: Newest</option>' +
-        '<option value="company" '+(state.sortBy==="company"?"selected":"")+'>Sort: Company</option>' +
-      '</select>' +
+      (lostCount ? '<label class="chk"><input type="checkbox" id="show-lost" '+(state.showLost?"checked":"")+'> '+
+                   'Not interested ('+lostCount+')</label>' : '') +
       '<div class="seg">' +
-        '<button data-cview="list" class="'+(state.contactsView==="list"?"active":"")+'">List</button>' +
+        '<button data-cview="list" class="'+(state.contactsView==="list"?"active":"")+'">Table</button>' +
         '<button data-cview="board" class="'+(state.contactsView==="board"?"active":"")+'">Pipeline</button>' +
       '</div>' +
-      '<span style="margin-left:auto;font-size:12.5px;color:var(--text-faint);">'+list.length+' contact'+(list.length===1?"":"s")+'</span>' +
+      '<span style="margin-left:auto;font-size:12.5px;color:var(--text-faint);">'+
+        list.length+' contact'+(list.length===1?"":"s")+'</span>' +
     '</div>';
-
-  if(list.length === 0){
-    return toolbar + '<div class="panel empty"><div class="big-ico">◆</div>No contacts match yet. Try clearing filters or add a new contact.</div>';
-  }
-
-  if(state.contactsView === "board"){
-    var contacted = list.filter(function(c){return c.stage==="contacted";});
-    var connected = list.filter(function(c){return c.stage==="connected";});
-    var col = function(title, items, stage){
-      return '<div class="board-col" data-drop-stage="'+stage+'"><h4>'+title+' <span class="count" style="background:var(--surface);padding:1px 7px;border-radius:999px;">'+items.length+'</span></h4>' +
-        items.map(function(c){
-          return '<div class="board-card" data-action="open-preview" data-id="'+c.id+'">' +
-            '<div class="nm">'+esc(c.name)+'</div><div class="sub">'+esc(c.company||industryName(c.industryId))+'</div>' +
-            '<div class="mv">' + (stage==="contacted"
-              ? '<button class="btn btn-sm" data-action="move-stage" data-id="'+c.id+'" data-stage="connected">Mark connected →</button>'
-              : '<button class="btn btn-sm btn-ghost" data-action="move-stage" data-id="'+c.id+'" data-stage="contacted">← Back to contacted</button>') +
-            '</div>' +
-          '</div>';
-        }).join("") +
-      '</div>';
-    };
-    return toolbar + '<div class="board">' + col("Contacted", contacted, "contacted") + col("Connected", connected, "connected") + '</div>';
-  }
-
-  if(state.industryFilter){
-    var indPositions = state.positions.filter(function(p){ return p.industryId===state.industryFilter; }).sort(function(a,b){ return a.name.localeCompare(b.name); });
-    var groups = indPositions.map(function(p){
-      return {name: p.name, items: list.filter(function(c){ return c.positionId===p.id; })};
-    });
-    var knownPosIds = indPositions.map(function(p){return p.id;});
-    var noPosItems = list.filter(function(c){ return !c.positionId || knownPosIds.indexOf(c.positionId)===-1; });
-    groups.push({name:"No position set", items:noPosItems});
-    var visible = groups.filter(function(g){ return g.items.length; });
-    var groupsHtml = visible.map(function(g, idx){
-      return '<div class="pos-group-head"'+(idx===0?' style="margin-top:0;"':'')+'>'+esc(g.name)+' · '+g.items.length+'</div>' +
-        '<div class="panel row-list">' + g.items.map(function(c){ return contactRowHtml(c, profiles, false); }).join("") + '</div>';
-    }).join("");
-    return toolbar + groupsHtml;
-  }
-
-  var rows = list.map(function(c){ return contactRowHtml(c, profiles, true); }).join("");
-  return toolbar + '<div class="panel row-list">' + rows + '</div>';
 }
+
+/* Dense, sortable, and built to stay readable at several hundred rows — which
+   is why this replaced the card list. */
+function contactsTableHtml(list, profiles){
+  function th(key, label, cls){
+    var on = state.sortBy === key;
+    return '<th class="'+(cls||"")+(on?" sorted":"")+'" data-action="sort" data-sort="'+key+'">' +
+      esc(label) + (on ? '<i>'+(state.sortDesc?"\u25b4":"\u25be")+'</i>' : '') + '</th>';
+  }
+  var head = '<thead><tr>' +
+      th("stage","Stage","c-stage") + th("name","Name") + th("company","Practice") +
+      th("owner","Owner","c-owner") + th("value","Value","c-val") +
+      th("touched","Last touch","c-touch") + th("due","Next action","c-next") +
+    '</tr></thead>';
+
+  var rows = list.map(function(c){
+    var st = stageOf(c);
+    var rem = openReminders(c.id).sort(function(a,b){ return new Date(a.dueAt)-new Date(b.dueAt); })[0];
+    var d = daysSince(lastTouch(c));
+    var quiet = isStale(c);
+    var next = rem
+      ? '<span class="kind k-'+esc(rem.kind||"call")+'">'+esc(ACTION_KIND_LABEL[rem.kind]||"Call")+'</span>' +
+        '<span class="nx-text">'+esc(rem.text||"")+'</span>' +
+        '<span class="nx-due '+(new Date(rem.dueAt) < new Date() ? "overdue" : "")+'">'+esc(fmtDate(rem.dueAt))+'</span>'
+      : '<button class="nx-none" data-action="quick-schedule" data-id="'+c.id+'">Nothing scheduled</button>';
+
+    return '<tr class="'+(c.lost?"is-lost":"")+'" data-action="open-preview" data-id="'+esc(c.id)+'">' +
+      '<td class="c-stage"><span class="stage s-'+esc(st)+'">'+esc(STAGE_LABEL[st])+'</span>'+
+        (c.lost?'<span class="stage s-lost" title="'+esc(LOST_REASON_LABEL[c.lostReason]||"")+'">Lost</span>':'')+'</td>' +
+      '<td class="c-name"><span class="nm">'+esc(c.name)+'</span>'+
+        (c.title?'<span class="ttl">'+esc(c.title)+'</span>':'')+'</td>' +
+      '<td class="c-co">'+esc(c.company || industryName(c.industryId))+'</td>' +
+      '<td class="c-owner">'+(c.ownerId
+          ? '<span class="who" title="'+esc(profileName(c.ownerId, profiles))+'">'+
+            esc(whoInitials(c.ownerId, profiles))+'</span>'
+          : '<span class="who none" title="No owner">\u2013</span>')+'</td>' +
+      '<td class="c-val">'+(contactValue(c)?esc(fmtMoney(contactValue(c))):'<span class="dim">\u2013</span>')+'</td>' +
+      '<td class="c-touch '+(quiet?"quiet":"")+'">'+(d===null?'\u2013':(d===0?"today":d+"d"))+'</td>' +
+      '<td class="c-next">'+next+'</td>' +
+    '</tr>';
+  }).join("");
+
+  return '<div class="panel ctable-wrap"><table class="ctable">'+head+'<tbody>'+rows+'</tbody></table></div>';
+}
+
+/* The pipeline as a summary rather than a drag-and-drop board: at hundreds of
+   contacts a column of cards is a scroll, not a signal. Click a stage to filter
+   the table to it. */
+function pipelineSummaryHtml(){
+  var buckets = pipelineByStage();
+  var total = pipelineContacts().length || 1;
+  var anyValue = STAGES.some(function(s){ return buckets[s.id].value > 0; });
+  var grand = STAGES.reduce(function(n,s){ return n + buckets[s.id].value; }, 0);
+
+  var cols = STAGES.map(function(s){
+    var b = buckets[s.id];
+    return '<button class="pstage" data-action="filter-stage" data-stage="'+s.id+'">' +
+        stageBarHtml(b, total) +
+        '<div class="ps-label">'+esc(s.label)+'</div>' +
+        '<div class="ps-count">'+b.count+'</div>' +
+        (anyValue ? '<div class="ps-value">'+(b.value?esc(fmtMoney(b.value))+"/mo":"&nbsp;")+'</div>' : '') +
+        '<div class="ps-hint">'+esc(s.hint)+'</div>' +
+      '</button>';
+  }).join("");
+
+  var lost = state.contacts.filter(function(c){ return c.lost && !c.archived; });
+  var reasons = {};
+  lost.forEach(function(c){ var k=c.lostReason||"other"; reasons[k]=(reasons[k]||0)+1; });
+  var reasonRows = Object.keys(reasons).sort(function(a,b){ return reasons[b]-reasons[a]; })
+    .map(function(k){
+      return '<div class="lr"><span>'+esc(LOST_REASON_LABEL[k]||k)+'</span>'+
+        '<b>'+reasons[k]+'</b></div>';
+    }).join("");
+
+  return '<div class="pipeline">'+cols+'</div>' +
+    (anyValue ? '<div class="pipe-total">Pipeline value <b>'+esc(fmtMoney(grand))+'/mo</b> '+
+                '<span class="dim">\u00b7 excludes contacts with no value set</span></div>' : '') +
+    (lost.length
+      ? '<div class="panel lost-panel"><div class="section-head"><h3>Why '+lost.length+
+        ' went nowhere</h3></div>'+reasonRows+
+        '<div class="hint">This list is worth more than the contacts were \u2014 it\u2019s the ' +
+        'objection you keep hitting.</div></div>'
+      : '');
+}
+/* How much of the whole pipeline is sitting in this stage. */
+function stageBarHtml(bucket, total){
+  var pct = Math.round(bucket.count / total * 100);
+  return '<div class="ps-bar"><i style="width:'+pct+'%"></i></div>';
+}
+
 function contactRowHtml(c, profiles, showPositionPill){
   var rem = activeReminderFor(c.id);
   var posName = positionName(c.positionId);
@@ -795,7 +1147,7 @@ function contactRowHtml(c, profiles, showPositionPill){
     '<div class="contact-avatar">'+esc(initialsOf(c.name))+'</div>' +
     '<div class="meta"><div class="nm">'+esc(c.name)+'</div><div class="sub">'+esc([c.title,c.company].filter(Boolean).join(" · ")||industryName(c.industryId))+'</div></div>' +
     '<div class="right">' +
-      '<span class="pill '+(c.stage==="connected"?"pill-connected":"pill-contacted")+'">'+STAGE_LABEL[c.stage]+'</span>' +
+      '<span class="stage s-'+stageOf(c)+'">'+esc(STAGE_LABEL[stageOf(c)])+'</span>' +
       (showPositionPill && posName ? '<span class="pill pill-neutral">'+esc(posName)+'</span>' : "") +
       (rem ? reminderStatusPill(rem.dueAt) : "") +
       '<span>'+esc(profileName(c.ownerId, profiles))+'</span>' +
@@ -804,33 +1156,112 @@ function contactRowHtml(c, profiles, showPositionPill){
 }
 
 // ---------- Reminders ----------
+/* The "what do I do next" view. Grouped by urgency rather than listed by date,
+   because the only question being asked here is what to pick up right now. */
 async function renderReminders(){
-  var open = state.reminders.filter(function(r){return r.status==="scheduled";}).sort(function(a,b){return new Date(a.dueAt)-new Date(b.dueAt);});
-  var done = state.reminders.filter(function(r){return r.status==="completed";}).sort(function(a,b){return new Date(b.completedAt)-new Date(a.completedAt);}).slice(0,20);
-  var ids = []; open.concat(done).forEach(function(r){ if(r.assigneeId) ids.push(r.assigneeId); });
+  var mine = state.actionsMineOnly && state.me ? state.me.id : null;
+  var open = state.reminders
+    .filter(function(r){ return r.status === "scheduled" && (!mine || r.assigneeId === mine); })
+    .sort(function(a,b){ return new Date(a.dueAt) - new Date(b.dueAt); });
+  var done = state.reminders.filter(function(r){ return r.status === "completed"; })
+    .sort(function(a,b){ return new Date(b.completedAt) - new Date(a.completedAt); }).slice(0, 15);
+
+  var ids = [];
+  open.concat(done).forEach(function(r){ if(r.assigneeId) ids.push(r.assigneeId); });
   var profiles = await resolveProfiles(ids);
 
+  var now = new Date();
+  var endOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59);
+  var endOfWeek = new Date(endOfToday.getTime() + 6 * 86400000);
+
+  var groups = [
+    { key:"overdue", title:"Overdue",      items:[], tone:"bad"  },
+    { key:"today",   title:"Today",        items:[], tone:"now"  },
+    { key:"week",    title:"Next 7 days",  items:[], tone:""     },
+    { key:"later",   title:"Later",        items:[], tone:"dim"  }
+  ];
+  open.forEach(function(r){
+    var d = new Date(r.dueAt);
+    if(d < now) groups[0].items.push(r);
+    else if(d <= endOfToday) groups[1].items.push(r);
+    else if(d <= endOfWeek) groups[2].items.push(r);
+    else groups[3].items.push(r);
+  });
+
   function row(r, isDone){
-    var c = state.contacts.find(function(x){return x.id===r.contactId;});
-    return '<div class="list-row">' +
-      '<div class="contact-avatar" style="cursor:pointer;" data-action="open-preview" data-id="'+r.contactId+'">'+esc(initialsOf(c?c.name:"?"))+'</div>' +
-      '<div class="meta" style="cursor:pointer;" data-action="open-preview" data-id="'+r.contactId+'">' +
-        '<div class="nm">'+esc(c?c.name:"Unknown contact")+'</div>' +
-        '<div class="sub">'+esc(r.text)+' · '+fmtDateTime(r.dueAt)+' · '+esc(profileName(r.assigneeId, profiles))+'</div>' +
-      '</div>' +
-      '<div class="right">' +
-        (isDone ? '<span class="pill pill-done">Done</span>' : reminderStatusPill(r.dueAt) + '<button class="btn btn-sm btn-primary" data-action="complete-reminder" data-id="'+r.id+'" data-cid="'+r.contactId+'">Complete</button>') +
-      '</div>' +
+    var c = state.contacts.find(function(x){ return x.id === r.contactId; });
+    var kind = ACTION_KIND_LABEL[r.kind] || "Call";
+    var st = c ? stageOf(c) : null;
+    return '<div class="act-row">' +
+      '<span class="kind k-'+esc(r.kind||"call")+'">'+esc(kind)+'</span>' +
+      '<button class="act-main" data-action="open-preview" data-id="'+esc(r.contactId)+'">' +
+        '<span class="nm">'+esc(c ? c.name : "Unknown contact")+'</span>' +
+        (c && c.company ? '<span class="co">'+esc(c.company)+'</span>' : '') +
+        (st ? '<span class="stage s-'+esc(st)+'">'+esc(STAGE_LABEL[st])+'</span>' : '') +
+      '</button>' +
+      '<span class="act-text">'+esc(r.text||"")+'</span>' +
+      '<span class="act-who" title="'+esc(profileName(r.assigneeId, profiles))+'">'+
+        esc(whoInitials(r.assigneeId, profiles))+'</span>' +
+      '<span class="act-when">'+esc(isDone ? fmtDate(r.completedAt) : fmtDateTime(r.dueAt))+'</span>' +
+      (isDone
+        ? '<span class="pill pill-done">Done</span>'
+        : '<button class="btn btn-sm btn-primary" data-action="complete-reminder" data-id="'+esc(r.id)+'" data-cid="'+esc(r.contactId)+'">Done</button>') +
     '</div>';
   }
 
-  var openHtml = open.length ? '<div class="panel row-list">' + open.map(function(r){return row(r,false);}).join("") + '</div>' : '<div class="panel empty">No open follow-ups.</div>';
-  var doneHtml = done.length ? '<div class="panel row-list">' + done.map(function(r){return row(r,true);}).join("") + '</div>' : '<div class="panel empty">Nothing completed yet.</div>';
+  var filterBar =
+    '<div class="toolbar">' +
+      '<div class="seg">' +
+        '<button data-action="actions-scope" data-scope="all" class="'+(state.actionsMineOnly?"":"active")+'">Everyone</button>' +
+        '<button data-action="actions-scope" data-scope="mine" class="'+(state.actionsMineOnly?"active":"")+'">Mine</button>' +
+      '</div>' +
+      '<span style="margin-left:auto;font-size:12.5px;color:var(--text-faint);">'+
+        open.length+' open</span>' +
+    '</div>';
 
-  return (
-    '<div class="section"><div class="section-head"><h3>Open ('+open.length+')</h3></div>'+openHtml+'</div>' +
-    '<div class="section"><div class="section-head"><h3>Recently completed</h3></div>'+doneHtml+'</div>'
-  );
+  var body = groups.filter(function(g){ return g.items.length; }).map(function(g){
+    return '<div class="section act-group '+g.tone+'">' +
+      '<div class="section-head"><h3>'+g.title+' <span class="gcount">'+g.items.length+'</span></h3></div>' +
+      '<div class="panel">'+g.items.map(function(r){ return row(r, false); }).join("")+'</div>' +
+    '</div>';
+  }).join("");
+
+  if(!open.length){
+    body = '<div class="panel empty"><div class="big-ico">\u25d4</div>' +
+      (state.actionsMineOnly ? 'Nothing assigned to you.' : 'Nothing scheduled.') +
+      '</div>';
+  }
+
+  /* Contacts with nothing scheduled belong here too — an empty action list
+     means nothing if eleven practices are quietly going cold. */
+  var stale = staleContacts();
+  var staleHtml = stale.length
+    ? '<div class="section act-group dim">' +
+        '<div class="section-head"><h3>Gone quiet <span class="gcount">'+stale.length+'</span></h3>' +
+        '<span class="hint">No activity for '+STALE_DAYS+'+ days, nothing scheduled</span></div>' +
+        '<div class="panel">' + stale.slice(0, 15).map(function(c){
+          return '<div class="act-row">' +
+            '<span class="kind k-none">'+daysSince(lastTouch(c))+'d</span>' +
+            '<button class="act-main" data-action="open-preview" data-id="'+esc(c.id)+'">' +
+              '<span class="nm">'+esc(c.name)+'</span>' +
+              (c.company ? '<span class="co">'+esc(c.company)+'</span>' : '') +
+              '<span class="stage s-'+esc(stageOf(c))+'">'+esc(STAGE_LABEL[stageOf(c)])+'</span>' +
+            '</button>' +
+            '<span class="act-text dim">nothing scheduled</span>' +
+            '<span class="act-who"></span><span class="act-when"></span>' +
+            '<button class="btn btn-sm" data-action="quick-schedule" data-id="'+esc(c.id)+'">Schedule</button>' +
+          '</div>';
+        }).join("") +
+        (stale.length > 15 ? '<div class="hint" style="padding:8px 12px;">+'+(stale.length-15)+' more</div>' : '') +
+        '</div></div>'
+    : '';
+
+  var doneHtml = done.length
+    ? '<div class="section act-group dim"><div class="section-head"><h3>Recently done</h3></div>' +
+      '<div class="panel">'+done.map(function(r){ return row(r, true); }).join("")+'</div></div>'
+    : '';
+
+  return filterBar + body + staleHtml + doneHtml;
 }
 
 // ---------- Calendar ----------
@@ -980,7 +1411,7 @@ async function renderContactFull(id){
         '<h3>'+esc(c.name)+'</h3>' +
         '<div class="role">'+esc([c.title,c.company].filter(Boolean).join(" at ")||"—")+'</div>' +
         '<div style="margin-top:8px;display:flex;gap:8px;flex-wrap:wrap;">' +
-          '<span class="pill '+(c.stage==="connected"?"pill-connected":"pill-contacted")+'">'+STAGE_LABEL[c.stage]+'</span>' +
+          '<span class="stage s-'+stageOf(c)+'">'+esc(STAGE_LABEL[stageOf(c)])+'</span>' +
           '<span class="pill pill-neutral">'+esc(industryName(c.industryId))+'</span>' +
         '</div>' +
       '</div>' +
@@ -993,12 +1424,36 @@ async function renderContactFull(id){
       (c.phone ? '<a class="btn btn-sm" href="tel:'+esc(c.phone)+'">📞 '+esc(c.phone)+'</a>' : '') +
       (c.email ? '<a class="btn btn-sm" href="mailto:'+esc(c.email)+'">✉ '+esc(c.email)+'</a>' : '') +
       (c.linkedin ? '<a class="btn btn-sm" href="'+esc(c.linkedin)+'" target="_blank" rel="noopener">in LinkedIn</a>' : '') +
-      '<button class="btn btn-sm '+(c.stage==="contacted"?"btn-primary":"")+'" data-action="move-stage" data-id="'+c.id+'" data-stage="'+(c.stage==="contacted"?"connected":"contacted")+'">' +
-        (c.stage==="contacted"?"Mark as connected":"Move back to contacted") +
-      '</button>' +
+      '</div>' +
+    /* The stage picker is deliberately plain and a little out of the way: the
+       intended path is logging a call and letting the stage follow. This is the
+       correction mechanism, not the main one. */
+    '<div class="stage-pick">' +
+      '<span class="sp-label">Stage</span>' +
+      STAGES.map(function(st){
+        var on = stageOf(c) === st.id;
+        return '<button class="sp '+(on?"on s-"+st.id:"")+'" data-action="set-stage" data-id="'+c.id+'" ' +
+          'data-stage="'+st.id+'" title="'+esc(st.hint)+'">'+esc(st.label)+'</button>';
+      }).join("") +
+      (c.lost
+        ? '<button class="btn btn-sm" data-action="revive" data-id="'+c.id+'">Back in pipeline</button>'
+        : '<button class="btn btn-sm btn-ghost sp-lost" data-action="mark-lost" data-id="'+c.id+'">Not interested</button>') +
     '</div>' +
+    (state.losingContact === c.id ? lostReasonFormHtml(c) : '') +
+    (c.lost ? '<div class="lost-note">Not interested \u2014 <b>'+esc(LOST_REASON_LABEL[c.lostReason]||"no reason given")+'</b>' +
+              (c.lostNote?'. '+esc(c.lostNote):'') + '</div>' : '') +
     '<div class="kv-grid">' +
-      kv("Owner", esc(profileName(c.ownerId, profiles))) +
+      kv("Owner",
+        '<select class="inline-sel" data-action="noop" id="owner-sel-'+c.id+'">' +
+          '<option value="">Unowned</option>' +
+          state.peers.concat([state.me]).filter(function(p,i,a){
+            return p && a.findIndex(function(x){ return x && x.id===p.id; })===i;
+          }).map(function(p){
+            return '<option value="'+esc(p.id)+'" '+(c.ownerId===p.id?"selected":"")+'>'+esc(p.name||p.email||"Someone")+'</option>';
+          }).join("") +
+        '</select>') +
+      kv("Value", '<span class="val-edit"><input type="number" min="0" step="10" id="val-'+c.id+'" ' +
+         'value="'+(contactValue(c)||"")+'" placeholder="\u2013"><em>/mo</em></span>') +
       kv("Created", esc(profileName(c.createdBy, profiles))+' · '+fmtDate(c.createdAt)) +
       kv("Last updated", esc(profileName(c.updatedBy, profiles))+' · '+timeAgo(c.updatedAt)) +
       kv("Industry", esc(industryName(c.industryId))) +
@@ -1065,11 +1520,37 @@ async function renderContactFull(id){
 
   return '<div class="panel">' + hero + tabsHtml + '<div class="tab-body">' + body + '</div></div>';
 }
+/* Marking someone not interested always asks why. One extra click, and it turns
+   a pile of dead leads into the clearest signal you'll get about the product. */
+function lostReasonFormHtml(c){
+  return '<div class="lost-form">' +
+    '<div class="lf-head">Why did ' + esc(c.name.split(" ")[0] || c.name) + ' pass?</div>' +
+    '<select id="lost-reason">' +
+      '<option value="">Pick a reason\u2026</option>' +
+      LOST_REASONS.map(function(r){
+        return '<option value="'+r.id+'">'+esc(r.label)+'</option>';
+      }).join("") +
+    '</select>' +
+    '<input type="text" id="lost-note" placeholder="Anything worth remembering (optional)">' +
+    '<div class="lf-actions">' +
+      '<button class="btn btn-sm btn-primary" data-action="confirm-lost" data-id="'+c.id+'">Mark not interested</button>' +
+      '<button class="btn btn-sm btn-ghost" data-action="cancel-lost">Cancel</button>' +
+    '</div>' +
+    '<div class="hint">Open follow-ups get cancelled. Nothing is deleted \u2014 you can put them back any time.</div>' +
+  '</div>';
+}
+
 function kv(k,v){ return '<div><div class="k">'+esc(k)+'</div><div class="v">'+v+'</div></div>'; }
 
 function newReminderInlineForm(contactId){
   return '<div class="panel" style="padding:16px;margin-top:10px;">' +
     '<div class="field"><label>Next step</label><input type="text" id="rem-text-'+contactId+'" placeholder="What\'s next?"></div>' +
+    '<div class="field"><label>How</label>' +
+      '<div class="kindset" id="rem-kind-'+contactId+'" data-value="call">' +
+        ACTION_KINDS.map(function(k, i){
+          return '<button type="button" class="'+(i===0?"on":"")+'" data-kindpick="'+k.id+'">'+esc(k.label)+'</button>';
+        }).join("") +
+      '</div></div>' +
     '<div class="field-row">' +
       '<div class="field"><label>Due</label><input type="datetime-local" id="rem-due-'+contactId+'" value="'+toLocalInputValue(plusHoursISO(48))+'"></div>' +
       '<div class="field"><label>Assign to</label>' + peoplePickerHtml("rem-assignee-"+contactId, state.me.id) + '</div>' +
@@ -1106,6 +1587,14 @@ function logCallForm(contactId){
       '<div class="field"><label>Duration (min)</label><input type="number" id="call-dur-'+contactId+'" value="15" min="0"></div>' +
     '</div>' +
     '<div class="field"><label>When</label><input type="datetime-local" id="call-when-'+contactId+'" value="'+toLocalInputValue(new Date().toISOString())+'"></div>' +
+    '<div class="field"><label>How did it go?</label>' +
+      '<select id="call-outcome-'+contactId+'">' +
+        CALL_OUTCOMES.map(function(o){
+          return '<option value="'+o.id+'">'+esc(o.label)+'</option>';
+        }).join("") +
+      '</select>' +
+      '<div class="hint">This is what moves them along the pipeline \u2014 you shouldn\u2019t ' +
+      'have to set the stage separately.</div></div>' +
     '<div class="field"><label>Notes</label><textarea id="call-notes-'+contactId+'" rows="2" placeholder="What did you cover?"></textarea></div>' +
     '<button class="btn btn-primary btn-sm" data-action="save-call" data-id="'+contactId+'">Save conversation</button>' +
   '</div>';
@@ -1135,14 +1624,34 @@ function renderModal(){
             '<div style="display:flex;gap:12px;align-items:center;margin-bottom:14px;">' +
               '<div class="contact-avatar" style="width:48px;height:48px;">'+esc(initialsOf(c.name))+'</div>' +
               '<div><div style="font-weight:700;">'+esc([c.title,c.company].filter(Boolean).join(" at ")||"—")+'</div>' +
-              '<span class="pill '+(c.stage==="connected"?"pill-connected":"pill-contacted")+'">'+STAGE_LABEL[c.stage]+'</span>' +
+              '<span class="stage s-'+stageOf(c)+'">'+esc(STAGE_LABEL[stageOf(c)])+'</span>' +
               (positionName(c.positionId) ? ' <span class="pill pill-neutral">'+esc(positionName(c.positionId))+'</span>' : '') +
               '</div>' +
             '</div>' +
             (c.email?'<div style="font-size:13px;margin-bottom:4px;">✉ <a href="mailto:'+esc(c.email)+'">'+esc(c.email)+'</a></div>':'') +
             (c.phone?'<div style="font-size:13px;margin-bottom:4px;">📞 <a href="tel:'+esc(c.phone)+'">'+esc(c.phone)+'</a></div>':'') +
             (c.linkedin?'<div style="font-size:13px;margin-bottom:4px;">in <a href="'+esc(c.linkedin)+'" target="_blank" rel="noopener">LinkedIn profile</a></div>':'') +
-            (rem ? '<div class="hint" style="margin-top:10px;">Next: '+esc(rem.text)+' — '+fmtDateTime(rem.dueAt)+'</div>' : '') +
+            (rem ? '<div class="hint" style="margin-top:10px;">Next: '+esc(rem.text)+' \u2014 '+fmtDateTime(rem.dueAt)+'</div>' : '') +
+            /* The stage controls belong here, not only on the full-screen view.
+               This panel is what you open while working a list, and changing
+               where someone sits is the most common thing you'll want to do
+               from it. */
+            '<div class="stage-pick">' +
+              '<span class="sp-label">Stage</span>' +
+              STAGES.map(function(st){
+                var on = stageOf(c) === st.id;
+                return '<button class="sp '+(on?"on s-"+st.id:"")+'" data-action="set-stage" ' +
+                  'data-id="'+c.id+'" data-stage="'+st.id+'" title="'+esc(st.hint)+'">'+
+                  esc(st.label)+'</button>';
+              }).join("") +
+              (c.lost
+                ? '<button class="btn btn-sm" data-action="revive" data-id="'+c.id+'">Back in pipeline</button>'
+                : '<button class="btn btn-sm btn-ghost sp-lost" data-action="mark-lost" data-id="'+c.id+'">Not interested</button>') +
+            '</div>' +
+            (state.losingContact === c.id ? lostReasonFormHtml(c) : '') +
+            (c.lost ? '<div class="lost-note">Not interested \u2014 <b>'+
+                      esc(LOST_REASON_LABEL[c.lostReason]||"no reason given")+'</b>'+
+                      (c.lostNote?'. '+esc(c.lostNote):'')+'</div>' : '') +
           '</div>' +
           '<div class="modal-foot">' +
             '<button class="btn" data-action="close-modal">Close</button>' +
@@ -1344,6 +1853,36 @@ function wireDynamic(){
   if(gi) gi.addEventListener("change", function(){ state.industryFilter = gi.value; render(); });
   var sb = $("#sort-by");
   if(sb) sb.addEventListener("change", function(){ state.sortBy = sb.value; render(); });
+  var stf = $("#stage-filter");
+  if(stf) stf.addEventListener("change", function(){ state.stageFilter = stf.value; render(); });
+  var owf = $("#owner-filter");
+  if(owf) owf.addEventListener("change", function(){ state.ownerFilter = owf.value; render(); });
+  var sl = $("#show-lost");
+  if(sl) sl.addEventListener("change", function(){ state.showLost = sl.checked; render(); });
+
+  /* Owner and value live on the contact panel and save on change / blur rather
+     than behind a Save button — one less step on the two fields most likely to
+     be corrected in passing. */
+  document.querySelectorAll('[id^="owner-sel-"]').forEach(function(selEl){
+    if(selEl.getAttribute("data-wired")) return;
+    selEl.setAttribute("data-wired","1");
+    selEl.addEventListener("change", function(){
+      var cid = selEl.id.replace("owner-sel-","");
+      var c = state.contacts.find(function(x){ return x.id===cid; });
+      if(c) setOwner(c, selEl.value).then(render, function(err){ toast(friendlyDbError(err), true); });
+    });
+  });
+  document.querySelectorAll('[id^="val-"]').forEach(function(inp){
+    if(inp.getAttribute("data-wired")) return;
+    inp.setAttribute("data-wired","1");
+    inp.addEventListener("change", function(){
+      var cid = inp.id.replace("val-","");
+      var c = state.contacts.find(function(x){ return x.id===cid; });
+      if(c && contactValue(c) !== (Number(inp.value)||0)){
+        setValue(c, inp.value).then(render, function(err){ toast(friendlyDbError(err), true); });
+      }
+    });
+  });
   document.querySelectorAll("[data-cview]").forEach(function(b){
     b.addEventListener("click", function(){ state.contactsView = b.getAttribute("data-cview"); render(); });
   });
@@ -1355,6 +1894,17 @@ function wireDynamic(){
       document.querySelectorAll('[data-radio="'+group+'"]').forEach(function(x){x.classList.remove("active");});
       el.classList.add("active");
       $("#"+group).value = el.getAttribute("data-value");
+    });
+  });
+  document.querySelectorAll(".kindset").forEach(function(set){
+    if(set.getAttribute("data-wired")) return;
+    set.setAttribute("data-wired","1");
+    set.addEventListener("click", function(e){
+      var b = e.target.closest("[data-kindpick]");
+      if(!b) return;
+      set.querySelectorAll("button").forEach(function(x){ x.classList.remove("on"); });
+      b.classList.add("on");
+      set.setAttribute("data-value", b.getAttribute("data-kindpick"));
     });
   });
   wireIndustryPositionLink("nc-industry","nc-position");
@@ -1387,6 +1937,56 @@ document.addEventListener("click", function(e){
   if(!action) return;
   var id = el.getAttribute("data-id");
   switch(action){
+    /* ---- CRM: sorting, filtering, and the stage/owner/value controls ---- */
+    case "sort": {
+      var key = el.getAttribute("data-sort");
+      /* Clicking the active column flips direction; a new column starts in the
+         direction that's useful for it rather than always ascending. */
+      if(state.sortBy === key) state.sortDesc = !state.sortDesc;
+      else { state.sortBy = key; state.sortDesc = false; }
+      return render();
+    }
+    case "sort-stale":
+      state.sortBy = "touched"; state.sortDesc = false;
+      state.contactsView = "list";
+      return render();
+    case "filter-stage":
+      state.stageFilter = el.getAttribute("data-stage");
+      state.contactsView = "list";
+      return render();
+    case "actions-scope":
+      state.actionsMineOnly = el.getAttribute("data-scope") === "mine";
+      return render();
+    case "quick-schedule":
+      state.previewId = id;
+      state.showNextStepAfter = id;
+      return render();
+    case "set-stage": {
+      var c0 = state.contacts.find(function(x){ return x.id === id; });
+      if(!c0) return;
+      return changeStage(c0, el.getAttribute("data-stage"))
+        .then(render, function(err){ toast(friendlyDbError(err), true); });
+    }
+    case "mark-lost":
+      state.losingContact = id;
+      return render();
+    case "cancel-lost":
+      state.losingContact = null;
+      return render();
+    case "confirm-lost": {
+      var c1 = state.contacts.find(function(x){ return x.id === id; });
+      var sel = $("#lost-reason");
+      if(!c1 || !sel || !sel.value) return;
+      var noteEl = $("#lost-note");
+      state.losingContact = null;
+      return markLost(c1, sel.value, noteEl ? noteEl.value : "")
+        .then(render, function(err){ toast(friendlyDbError(err), true); });
+    }
+    case "revive": {
+      var c2 = state.contacts.find(function(x){ return x.id === id; });
+      if(!c2) return;
+      return reviveContact(c2).then(render, function(err){ toast(friendlyDbError(err), true); });
+    }
     case "toggle-sidebar":
       if(window.innerWidth <= 760){ state.mobileOpen = !state.mobileOpen; } else { state.sidebarCollapsed = !state.sidebarCollapsed; }
       return render();
@@ -1560,13 +2160,17 @@ async function doAddNote(contactId){
 async function doSaveCall(contactId){
   var c = state.contacts.find(function(x){return x.id===contactId;});
   try{
-    await logCall(c, {
+    var outcome = await logCall(c, {
       type: $("#call-type-"+contactId).value,
       occurredAt: fromLocalInputValue($("#call-when-"+contactId).value),
       durationMinutes: $("#call-dur-"+contactId).value,
+      outcome: (function(){ var el = $("#call-outcome-"+contactId); return el ? el.value : null; })(),
       notes: $("#call-notes-"+contactId).value.trim()
     });
     state.route = Object.assign({}, state.route, {showCallForm:false});
+    /* "Not interested" on a call drops straight into the reason prompt rather
+       than leaving them parked in whatever stage they were in. */
+    if(outcome === "ask_lost_reason") state.losingContact = contactId;
     render();
   }catch(e){ toast(friendlyDbError(e), true); }
 }
@@ -1577,6 +2181,7 @@ async function doSaveReminder(contactId){
   try{
     await createReminder(c, {
       text:text, dueAt: fromLocalInputValue($("#rem-due-"+contactId).value),
+      kind: (function(){ var k = $("#rem-kind-"+contactId); return k ? k.getAttribute("data-value") : "call"; })(),
       assigneeId: selectedPeople("rem-assignee-"+contactId)
     });
     state.showNextStepAfter = null;

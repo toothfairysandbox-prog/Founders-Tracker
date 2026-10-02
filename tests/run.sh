@@ -34,3 +34,6 @@ node tmerge.mjs
 echo
 echo "── attachments ──────────────────────────────────"
 node tatt.mjs
+echo
+echo "── crm ──────────────────────────────────────────"
+node tcrm.mjs

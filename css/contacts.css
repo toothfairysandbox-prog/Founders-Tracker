@@ -221,3 +221,195 @@ body{background:var(--bg);color:var(--text);font-family:var(--font-ui);}
 #shell .sidebar:not(.mobile-open),#modal-root .sidebar:not(.mobile-open){margin-left:-240px;opacity:0;pointer-events:none;}
 #shell .kv-grid,#modal-root .kv-grid{grid-template-columns:1fr;}
 #shell .field-row,#modal-root .field-row{flex-direction:column;}}
+
+/* ===================== CRM: pipeline, table, action items =====================
+   Convention in this file: every selector is written twice, once under #shell
+   and once under #modal-root, because the contact panels render into a modal
+   host at body level. Keep both or the rule applies in only one of them. */
+
+/* ---- stage pills. One ramp, cool to warm, so progress reads as motion ---- */
+#shell .stage,#modal-root .stage{
+  display:inline-block;padding:2px 8px;border-radius:999px;
+  font-size:10.5px;font-weight:700;letter-spacing:.03em;white-space:nowrap;
+  background:var(--surface-2);color:var(--text-muted);
+}
+#shell .s-contacted,#modal-root .s-contacted{background:var(--surface-2);color:var(--text-muted)}
+#shell .s-interested,#modal-root .s-interested{background:var(--warning-soft);color:var(--warning)}
+#shell .s-pilot,#modal-root .s-pilot{background:var(--accent-soft);color:var(--accent-soft-ink)}
+#shell .s-closed,#modal-root .s-closed{background:var(--success-soft);color:var(--success)}
+#shell .s-onboarded,#modal-root .s-onboarded{background:var(--success);color:#fff}
+#shell .s-lost,#modal-root .s-lost{background:var(--danger-soft);color:var(--danger);margin-left:4px}
+
+/* ---- the contacts table ---- */
+#shell .ctable-wrap,#modal-root .ctable-wrap{padding:0;overflow-x:auto}
+#shell .ctable,#modal-root .ctable{width:100%;border-collapse:collapse;font-size:13px}
+#shell .ctable th,#modal-root .ctable th{
+  position:sticky;top:0;z-index:1;text-align:left;white-space:nowrap;cursor:pointer;
+  padding:9px 10px;background:var(--surface-2);border-bottom:1px solid var(--line);
+  font-size:10.5px;letter-spacing:.07em;text-transform:uppercase;color:var(--text-faint);font-weight:700;
+}
+#shell .ctable th:hover,#modal-root .ctable th:hover{color:var(--text)}
+#shell .ctable th.sorted,#modal-root .ctable th.sorted{color:var(--accent)}
+#shell .ctable th i,#modal-root .ctable th i{font-style:normal;margin-left:3px}
+#shell .ctable td,#modal-root .ctable td{padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:middle}
+#shell .ctable tbody tr,#modal-root .ctable tbody tr{cursor:pointer}
+#shell .ctable tbody tr:hover,#modal-root .ctable tbody tr:hover{background:var(--surface-2)}
+#shell .ctable tr.is-lost,#modal-root .ctable tr.is-lost{opacity:.55}
+#shell .ctable .c-name .nm,#modal-root .ctable .c-name .nm{font-weight:650;display:block}
+#shell .ctable .c-name .ttl,#modal-root .ctable .c-name .ttl{display:block;font-size:11.5px;color:var(--text-faint)}
+#shell .ctable .c-co,#modal-root .ctable .c-co{color:var(--text-muted)}
+#shell .ctable .c-val,#modal-root .ctable .c-val{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
+#shell .ctable .c-touch,#modal-root .ctable .c-touch{text-align:right;font-variant-numeric:tabular-nums;color:var(--text-faint)}
+/* The one cell allowed to shout: a contact nobody has touched in a fortnight. */
+#shell .ctable .c-touch.quiet,#modal-root .ctable .c-touch.quiet{color:var(--danger);font-weight:700}
+#shell .ctable .dim,#modal-root .ctable .dim{color:var(--text-faint)}
+#shell .who,#modal-root .who{
+  display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;
+  border-radius:50%;background:var(--accent-soft);color:var(--accent-soft-ink);
+  font-size:10px;font-weight:700;
+}
+#shell .who.none,#modal-root .who.none{background:transparent;color:var(--text-faint)}
+#shell .nx-text,#modal-root .nx-text{margin:0 6px;color:var(--text-muted)}
+#shell .nx-due,#modal-root .nx-due{font-size:11.5px;color:var(--text-faint);white-space:nowrap}
+#shell .nx-due.overdue,#modal-root .nx-due.overdue{color:var(--danger);font-weight:700}
+#shell .nx-none,#modal-root .nx-none{
+  background:none;border:1px dashed var(--line-strong,var(--line));border-radius:7px;
+  padding:3px 8px;font-size:11.5px;color:var(--text-faint);cursor:pointer;
+}
+#shell .nx-none:hover,#modal-root .nx-none:hover{border-color:var(--accent);color:var(--accent)}
+
+/* ---- action-item type tags ---- */
+#shell .kind,#modal-root .kind{
+  display:inline-block;min-width:52px;text-align:center;padding:2px 7px;border-radius:6px;
+  font-size:10px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;
+  background:var(--surface-2);color:var(--text-muted);
+}
+#shell .k-call,#modal-root .k-call{background:var(--accent-soft);color:var(--accent-soft-ink)}
+#shell .k-text,#modal-root .k-text{background:var(--success-soft);color:var(--success)}
+#shell .k-email,#modal-root .k-email{background:var(--warning-soft);color:var(--warning)}
+#shell .k-meeting,#modal-root .k-meeting{background:var(--danger-soft);color:var(--danger)}
+#shell .k-none,#modal-root .k-none{background:transparent;color:var(--text-faint);font-variant-numeric:tabular-nums}
+
+/* ---- action rows ---- */
+#shell .act-row,#modal-root .act-row{
+  display:flex;align-items:center;gap:10px;padding:8px 12px;border-bottom:1px solid var(--line);
+}
+#shell .act-row:last-child,#modal-root .act-row:last-child{border-bottom:0}
+#shell .act-main,#modal-root .act-main{
+  display:flex;align-items:center;gap:8px;background:none;border:0;padding:0;
+  cursor:pointer;color:inherit;text-align:left;min-width:0;
+}
+#shell .act-main .nm,#modal-root .act-main .nm{font-weight:650;white-space:nowrap}
+#shell .act-main .co,#modal-root .act-main .co{font-size:11.5px;color:var(--text-faint);white-space:nowrap}
+#shell .act-text,#modal-root .act-text{
+  flex:1;min-width:0;color:var(--text-muted);font-size:12.5px;
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+}
+#shell .act-text.dim,#modal-root .act-text.dim{color:var(--text-faint);font-style:italic}
+#shell .act-who,#modal-root .act-who{font-size:10.5px;color:var(--text-faint);width:26px;text-align:center}
+#shell .act-when,#modal-root .act-when{font-size:11.5px;color:var(--text-faint);white-space:nowrap}
+#shell .act-group.bad .section-head h3,#modal-root .act-group.bad .section-head h3{color:var(--danger)}
+#shell .act-group.now .section-head h3,#modal-root .act-group.now .section-head h3{color:var(--accent)}
+#shell .act-group.dim,#modal-root .act-group.dim{opacity:.85}
+#shell .gcount,#modal-root .gcount{
+  display:inline-block;margin-left:6px;padding:0 7px;border-radius:999px;
+  background:var(--surface-2);font-size:11px;color:var(--text-muted);
+}
+
+/* ---- "gone quiet" banner ---- */
+#shell .gone-quiet,#modal-root .gone-quiet{
+  border:1px solid var(--danger);background:var(--danger-soft);
+  border-radius:12px;padding:12px 14px;margin-bottom:14px;
+}
+#shell .gq-head,#modal-root .gq-head{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:8px}
+#shell .gq-head strong,#modal-root .gq-head strong{color:var(--danger)}
+#shell .gq-head span,#modal-root .gq-head span{font-size:12px;color:var(--text-muted)}
+#shell .gq-head .btn,#modal-root .gq-head .btn{margin-left:auto}
+#shell .gq-names,#modal-root .gq-names{display:flex;gap:6px;flex-wrap:wrap;align-items:center}
+#shell .gq-chip,#modal-root .gq-chip{
+  background:var(--surface);border:1px solid var(--line);border-radius:999px;
+  padding:3px 10px;font-size:12px;cursor:pointer;color:inherit;
+}
+#shell .gq-chip:hover,#modal-root .gq-chip:hover{border-color:var(--danger)}
+#shell .gq-chip em,#modal-root .gq-chip em{font-style:normal;color:var(--danger);font-weight:700;margin-left:3px}
+#shell .gq-more,#modal-root .gq-more{font-size:12px;color:var(--text-muted)}
+
+/* ---- pipeline summary ---- */
+#shell .pipeline,#modal-root .pipeline{
+  display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin-bottom:14px;
+}
+#shell .pstage,#modal-root .pstage{
+  text-align:left;background:var(--surface);border:1px solid var(--line);border-radius:12px;
+  padding:12px 13px;cursor:pointer;color:inherit;
+}
+#shell .pstage:hover,#modal-root .pstage:hover{border-color:var(--accent)}
+#shell .ps-bar,#modal-root .ps-bar{height:4px;border-radius:999px;background:var(--surface-2);overflow:hidden;margin-bottom:9px}
+#shell .ps-bar i,#modal-root .ps-bar i{display:block;height:100%;background:var(--accent)}
+#shell .ps-label,#modal-root .ps-label{font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:var(--text-faint);font-weight:700}
+#shell .ps-count,#modal-root .ps-count{font-size:26px;font-weight:700;line-height:1.1}
+#shell .ps-value,#modal-root .ps-value{font-size:12.5px;color:var(--success);font-weight:650}
+#shell .ps-hint,#modal-root .ps-hint{font-size:11.5px;color:var(--text-faint);margin-top:4px;line-height:1.35}
+#shell .pipe-total,#modal-root .pipe-total{font-size:13px;color:var(--text-muted);margin-bottom:14px}
+#shell .pipe-total .dim,#modal-root .pipe-total .dim{color:var(--text-faint)}
+#shell .lost-panel .lr,#modal-root .lost-panel .lr{
+  display:flex;justify-content:space-between;padding:6px 14px;font-size:13px;border-bottom:1px solid var(--line);
+}
+#shell .lost-panel .hint,#modal-root .lost-panel .hint{padding:9px 14px}
+
+/* ---- compact pipeline strip on Home ---- */
+#shell .mini-pipe,#modal-root .mini-pipe{display:flex;gap:8px;flex-wrap:wrap}
+#shell .mini-pipe .mp,#modal-root .mini-pipe .mp{
+  flex:1 1 90px;text-align:left;background:none;border:0;padding:0;cursor:pointer;color:inherit;
+}
+#shell .mp-bar,#modal-root .mp-bar{display:block;height:6px;border-radius:999px;background:var(--accent);min-width:3px;margin-bottom:5px}
+#shell .mp-bar.s-contacted,#modal-root .mp-bar.s-contacted{background:var(--text-faint)}
+#shell .mp-bar.s-interested,#modal-root .mp-bar.s-interested{background:var(--warning)}
+#shell .mp-bar.s-pilot,#modal-root .mp-bar.s-pilot{background:var(--accent)}
+#shell .mp-bar.s-closed,#modal-root .mp-bar.s-closed{background:var(--success)}
+#shell .mp-bar.s-onboarded,#modal-root .mp-bar.s-onboarded{background:var(--success)}
+#shell .mp-n,#modal-root .mp-n{font-size:17px;font-weight:700;margin-right:5px}
+#shell .mp-l,#modal-root .mp-l{font-size:11px;color:var(--text-faint)}
+
+/* ---- stage picker + lost flow on the contact panel ---- */
+#shell .stage-pick,#modal-root .stage-pick{
+  display:flex;align-items:center;gap:5px;flex-wrap:wrap;padding:10px 0;
+}
+#shell .sp-label,#modal-root .sp-label{
+  font-size:10.5px;letter-spacing:.07em;text-transform:uppercase;color:var(--text-faint);
+  font-weight:700;margin-right:3px;
+}
+#shell .stage-pick .sp,#modal-root .stage-pick .sp{
+  background:var(--surface);border:1px solid var(--line);border-radius:999px;
+  padding:4px 11px;font-size:12px;cursor:pointer;color:var(--text-muted);
+}
+#shell .stage-pick .sp:hover,#modal-root .stage-pick .sp:hover{border-color:var(--accent);color:var(--text)}
+#shell .stage-pick .sp.on,#modal-root .stage-pick .sp.on{
+  border-color:transparent;font-weight:700;color:#fff;background:var(--accent);
+}
+#shell .stage-pick .sp-lost,#modal-root .stage-pick .sp-lost{margin-left:auto}
+#shell .lost-form,#modal-root .lost-form{
+  border:1px solid var(--danger);background:var(--danger-soft);border-radius:12px;padding:13px;margin-bottom:12px;
+}
+#shell .lf-head,#modal-root .lf-head{font-weight:700;margin-bottom:8px}
+#shell .lost-form select,#shell .lost-form input,
+#modal-root .lost-form select,#modal-root .lost-form input{width:100%;margin-bottom:8px}
+#shell .lf-actions,#modal-root .lf-actions{display:flex;gap:7px;margin-bottom:6px}
+#shell .lost-note,#modal-root .lost-note{
+  font-size:12.5px;color:var(--danger);background:var(--danger-soft);
+  border-radius:8px;padding:7px 11px;margin-bottom:12px;
+}
+#shell .inline-sel,#modal-root .inline-sel{font-size:13px;padding:3px 6px;max-width:100%}
+#shell .val-edit,#modal-root .val-edit{display:inline-flex;align-items:center;gap:4px}
+#shell .val-edit input,#modal-root .val-edit input{width:88px;font-size:13px;padding:3px 6px}
+#shell .val-edit em,#modal-root .val-edit em{font-style:normal;font-size:11.5px;color:var(--text-faint)}
+
+/* ---- segmented "how" picker on the follow-up form ---- */
+#shell .kindset,#modal-root .kindset{display:flex;gap:4px;flex-wrap:wrap}
+#shell .kindset button,#modal-root .kindset button{
+  background:var(--surface);border:1px solid var(--line);border-radius:8px;
+  padding:5px 11px;font-size:12px;cursor:pointer;color:var(--text-muted);
+}
+#shell .kindset button.on,#modal-root .kindset button.on{
+  background:var(--accent);border-color:transparent;color:#fff;font-weight:650;
+}
+#shell .chk,#modal-root .chk{display:flex;align-items:center;gap:5px;font-size:12.5px;color:var(--text-muted);white-space:nowrap}
