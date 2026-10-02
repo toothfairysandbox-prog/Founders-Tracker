@@ -1083,9 +1083,9 @@ function contactsTableHtml(list, profiles){
         (c.title?'<span class="ttl">'+esc(c.title)+'</span>':'')+'</td>' +
       '<td class="c-co">'+esc(c.company || industryName(c.industryId))+'</td>' +
       '<td class="c-owner">'+(c.ownerId
-          ? '<span class="who" title="'+esc(profileName(c.ownerId, profiles))+'">'+
+          ? '<span class="ownerchip" title="'+esc(profileName(c.ownerId, profiles))+'">'+
             esc(whoInitials(c.ownerId, profiles))+'</span>'
-          : '<span class="who none" title="No owner">\u2013</span>')+'</td>' +
+          : '<span class="ownerchip none" title="No owner">\u2013</span>')+'</td>' +
       '<td class="c-val">'+(contactValue(c)?esc(fmtMoney(contactValue(c))):'<span class="dim">\u2013</span>')+'</td>' +
       '<td class="c-touch '+(quiet?"quiet":"")+'">'+(d===null?'\u2013':(d===0?"today":d+"d"))+'</td>' +
       '<td class="c-next">'+next+'</td>' +

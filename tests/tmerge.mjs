@@ -115,6 +115,27 @@ const t1 = await p.$eval('#page-title', n => n.textContent);
 console.log('19. title survives a background contacts update:',
   JSON.stringify({ before: t0, after: t1, ok: t0 === 'Notes' && t1 === 'Notes' }));
 
+// ---- the contacts stylesheet must not leak onto goals markup ----------
+// #goals-root is inside #shell, so any bare `#shell .foo` rule in the contacts
+// stylesheet also hits goals markup using the same class name. This caught a
+// real one: `.who` crushed the note cards' "who was involved" pill to 22px and
+// wrapped the text onto two lines.
+await p.click('[data-gnav="notes"]'); await p.waitForTimeout(400);
+await p.click('[data-act="newnote"]'); await p.waitForTimeout(300);
+await p.fill('[data-draft="nf-title"]', 'Meeting with Dad & Scott');
+await p.click('[data-act="savenote"]'); await p.waitForTimeout(600);
+const pill = await p.evaluate(() => {
+  const el = document.querySelector('#goals-root .note .note-meta .who');
+  if (!el) return { found: false };
+  const r = el.getBoundingClientRect();
+  const cs = getComputedStyle(el);
+  return { found: true, w: Math.round(r.width), h: Math.round(r.height),
+           lineHeight: parseFloat(cs.lineHeight) || 0, text: el.textContent.trim() };
+});
+console.log('21. note "who" pill is one line, not crushed:',
+  JSON.stringify(pill),
+  (pill.found && pill.h < 22 && pill.w > 60) ? '' : '  <-- WRAPPED OR SQUASHED');
+
 // the sidebar is the only goal navigation now — it must drive the topbar
 for (const [nav, want] of [['garrett','Garrett'], ['build','Build night'], ['samuel','Samuel']]) {
   await p.click(`[data-gnav="${nav}"]`); await p.waitForTimeout(350);

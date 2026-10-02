@@ -263,12 +263,16 @@ body{background:var(--bg);color:var(--text);font-family:var(--font-ui);}
 /* The one cell allowed to shout: a contact nobody has touched in a fortnight. */
 #shell .ctable .c-touch.quiet,#modal-root .ctable .c-touch.quiet{color:var(--danger);font-weight:700}
 #shell .ctable .dim,#modal-root .ctable .dim{color:var(--text-faint)}
-#shell .who,#modal-root .who{
+/* Named .ownerchip, not .who: #goals-root sits inside #shell, so a bare .who
+   here also matched the note cards' "who was involved" pill on the goals side
+   and crushed it to 22px wide. The goals stylesheet loads later and wins ties,
+   but it sets no width, so there was nothing to win against. */
+#shell .ownerchip,#modal-root .ownerchip{
   display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;
   border-radius:50%;background:var(--accent-soft);color:var(--accent-soft-ink);
   font-size:10px;font-weight:700;
 }
-#shell .who.none,#modal-root .who.none{background:transparent;color:var(--text-faint)}
+#shell .ownerchip.none,#modal-root .ownerchip.none{background:transparent;color:var(--text-faint)}
 #shell .nx-text,#modal-root .nx-text{margin:0 6px;color:var(--text-muted)}
 #shell .nx-due,#modal-root .nx-due{font-size:11.5px;color:var(--text-faint);white-space:nowrap}
 #shell .nx-due.overdue,#modal-root .nx-due.overdue{color:var(--danger);font-weight:700}
