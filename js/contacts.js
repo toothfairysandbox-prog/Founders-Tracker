@@ -879,8 +879,11 @@ function renderSidebar(){
   var sb = $("#sidebar");
   sb.classList.toggle("collapsed", state.sidebarCollapsed);
   sb.classList.toggle("mobile-open", state.mobileOpen);
-  document.querySelectorAll(".navitem").forEach(function(btn){
-    btn.classList.toggle("active", btn.dataset.nav === state.route.view);
+  /* Only this half's own nav items, and only while it's on screen — a
+     background data push mustn't light up "Home" while you're on To-do. */
+  var onScreen = !window.__SVC || window.__SVC.section() === "contacts";
+  document.querySelectorAll(".navitem[data-nav]").forEach(function(btn){
+    btn.classList.toggle("active", onScreen && btn.dataset.nav === state.route.view);
   });
   var openReminders = state.reminders.filter(function(r){ return r.status==="scheduled"; }).length;
   $("#nav-count-contacts").textContent = visibleContacts().length || "";
@@ -2283,7 +2286,10 @@ window.__CONTACTS = {
   boot: boot,
   go: function(view){ state.route = {view: view}; render(); },
   render: function(){ scheduleRender(); },
-  view: function(){ return state.route.view; }
+  view: function(){ return state.route.view; },
+  /* The other sections navigate without going through this file's click
+     handler, so they ask it to fold the phone sidebar away. */
+  closeMobile: function(){ state.mobileOpen = false; if(state.me) renderSidebar(); }
 };
 
 })();

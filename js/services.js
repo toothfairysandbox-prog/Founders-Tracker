@@ -9,6 +9,13 @@ var COLORS = {samuel:"#5B3E96", garrett:"#1F8A5F", team:"#B9781A"};
 var NAMES  = {samuel:"Samuel", garrett:"Garrett", team:"Team"};
 
 var _db = null, _me = null;
+
+/* The Team sections. Each is its own file with its own root, and publishes
+   boot() and show() on window under the name given here. */
+var TEAM = {
+  todo: { root:"todo-root", api:"__TODOS", title:"To-do" },
+  docs: { root:"docs-root", api:"__DOCS",  title:"Documents" }
+};
 var section = "goals";
 
 /* Firestore wearing the artifact db's clothes, so Garrett's calls and ours both
@@ -105,12 +112,34 @@ var SVC = {
     }
   },
   show: function(sec, view){
+    if(!TEAM[sec] && sec !== "goals" && sec !== "contacts") sec = "goals";
     section = sec;
     var goalsRoot = document.getElementById("goals-root");
     var viewRoot = document.getElementById("view-root");
     var newBtn = document.getElementById("newContactBtn");
     var searchWrap = document.getElementById("global-search-wrap");
-    if(sec === "goals"){
+    /* To-do and Documents each own a root of their own; only one is visible. */
+    Object.keys(TEAM).forEach(function(k){
+      var r = document.getElementById(TEAM[k].root);
+      if(r) r.hidden = (k !== sec);
+    });
+    var ws = document.querySelectorAll("[data-wnav]");
+    for(var w=0;w<ws.length;w++) ws[w].classList.toggle("active", ws[w].getAttribute("data-wnav")===sec);
+    if(TEAM[sec]){
+      if(goalsRoot) goalsRoot.hidden = true;
+      if(viewRoot) viewRoot.hidden = true;
+      if(newBtn) newBtn.hidden = true;
+      if(searchWrap) searchWrap.hidden = true;
+      var tt = document.getElementById("page-title");
+      if(tt) tt.textContent = TEAM[sec].title;
+      var gg = document.querySelectorAll("#goals-nav [data-gnav]");
+      for(var a=0;a<gg.length;a++) gg[a].classList.remove("active");
+      var nn = document.querySelectorAll("[data-nav]");
+      for(var b2=0;b2<nn.length;b2++) nn[b2].classList.remove("active");
+      var mod = window[TEAM[sec].api];
+      if(mod) mod.show();
+      if(window.__CONTACTS && window.__CONTACTS.closeMobile) window.__CONTACTS.closeMobile();
+    } else if(sec === "goals"){
       if(goalsRoot) goalsRoot.hidden = false;
       if(viewRoot) viewRoot.hidden = true;
       if(newBtn) newBtn.hidden = true;
@@ -139,6 +168,8 @@ window.__SVC = SVC;
 document.addEventListener("click", function(e){
   var g = e.target.closest ? e.target.closest("[data-gnav]") : null;
   if(g){ SVC.show("goals", g.getAttribute("data-gnav")); return; }
+  var t = e.target.closest ? e.target.closest("[data-wnav]") : null;
+  if(t){ SVC.show(t.getAttribute("data-wnav")); return; }
   var c = e.target.closest ? e.target.closest("[data-nav]") : null;
   if(c){ SVC.show("contacts", c.getAttribute("data-nav")); return; }
   var b = e.target.closest ? e.target.closest('[data-action="go-home"]') : null;
@@ -157,6 +188,8 @@ window.addEventListener("tf-signed-in", function(ev){
     color: COLORS[d.id] || "#5B3E96"
   };
   if(window.__CONTACTS) window.__CONTACTS.boot();
+  if(window.__TODOS) window.__TODOS.boot();
+  if(window.__DOCS) window.__DOCS.boot();
   var start = "goals";
   try{ start = localStorage.getItem("tf.section") || "goals"; }catch(e){}
   SVC.show(start, start === "goals"

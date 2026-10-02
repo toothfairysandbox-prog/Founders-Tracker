@@ -7,6 +7,8 @@ const FAKE = fs.readFileSync(new URL('./fake-firebase.js', import.meta.url), 'ut
 const b = await chromium.launch(process.env.CHROMIUM_PATH ? { executablePath: process.env.CHROMIUM_PATH } : {});
 const ctx = await b.newContext({ viewport: { width: 1400, height: 1000 } });
 await ctx.addInitScript(FAKE);
+/* The real Firebase SDK would load from gstatic and replace the fake. */
+await ctx.route(/gstatic\.com\/firebasejs/, r => r.abort());
 const p = await ctx.newPage();
 const errs = [];
 p.on('pageerror', e => errs.push('PAGEERROR ' + String(e)));

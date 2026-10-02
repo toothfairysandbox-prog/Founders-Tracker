@@ -50,6 +50,8 @@ const SEED = `
 const b = await chromium.launch(process.env.CHROMIUM_PATH ? { executablePath: process.env.CHROMIUM_PATH } : {});
 const ctx = await b.newContext({ viewport: { width: 1500, height: 1000 } });
 await ctx.addInitScript(FAKE);
+/* The real Firebase SDK would load from gstatic and replace the fake. */
+await ctx.route(/gstatic\.com\/firebasejs/, r => r.abort());
 await ctx.addInitScript(SEED);
 const p = await ctx.newPage();
 const errs = [];

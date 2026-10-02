@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Tooth Fairy — Goals &amp; Contacts</title>
+<title>Tooth Fairy — Goals, Contacts &amp; To-dos</title>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%231D4E6B'/%3E%3Ctext x='16' y='22' font-family='system-ui' font-size='15' font-weight='700' fill='white' text-anchor='middle'%3ETF%3C/text%3E%3C/svg%3E">
 <meta name="description" content="Weekly goals and contact tracking for Samuel and Garrett.">
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -13,6 +13,7 @@
 <link rel="stylesheet" href="css/contacts.css">
 <link rel="stylesheet" href="css/shell.css">
 <link rel="stylesheet" href="css/goals.css">
+<link rel="stylesheet" href="css/team.css">
 </head>
 <body>
 <div id="goals-overlays">
@@ -55,6 +56,11 @@
       <button class="navitem" data-nav="activity"><span class="ico">≋</span> Activity</button>
       <button class="navitem" data-nav="industries"><span class="ico">▤</span> Industries</button>
     </div>
+    <div class="navsection">Team</div>
+    <div class="navgroup">
+      <button class="navitem" data-wnav="todo"><span class="ico">☑</span> To-do <span class="count" id="nav-count-todo"></span></button>
+      <button class="navitem" data-wnav="docs"><span class="ico">▣</span> Documents</button>
+    </div>
     <div class="sidebar-foot">
       <div class="presence" id="presence-box"></div>
       <div class="me-row" id="me-row"></div>
@@ -77,6 +83,8 @@
       <div class="idchip" id="idchip"></div>
     </div>
     <div class="view-root" id="view-root"></div>
+    <div class="view-root" id="todo-root" hidden></div>
+    <div class="view-root" id="docs-root" hidden></div>
     <div id="goals-root" hidden>
 
 
@@ -119,5 +127,7 @@
 <script src="js/services.js"></script>
 <script src="js/goals.js"></script>
 <script src="js/contacts.js"></script>
+<script src="js/todos.js"></script>
+<script src="js/documents.js"></script>
 </body>
 </html>
