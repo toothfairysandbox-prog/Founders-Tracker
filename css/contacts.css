@@ -233,11 +233,14 @@ body{background:var(--bg);color:var(--text);font-family:var(--font-ui);}
   font-size:10.5px;font-weight:700;letter-spacing:.03em;white-space:nowrap;
   background:var(--surface-2);color:var(--text-muted);
 }
-#shell .s-contacted,#modal-root .s-contacted{background:var(--surface-2);color:var(--text-muted)}
-#shell .s-interested,#modal-root .s-interested{background:var(--warning-soft);color:var(--warning)}
-#shell .s-pilot,#modal-root .s-pilot{background:var(--accent-soft);color:var(--accent-soft-ink)}
-#shell .s-closed,#modal-root .s-closed{background:var(--success-soft);color:var(--success)}
-#shell .s-onboarded,#modal-root .s-onboarded{background:var(--success);color:#fff}
+/* Stage colour follows position in the pipeline, not the stage's name — the
+   pipeline is editable, so a stage Samuel invented has to look like something
+   too. The five defaults land on exactly the tones they always had. */
+#shell .st-t0,#modal-root .st-t0{background:var(--surface-2);color:var(--text-muted)}
+#shell .st-t1,#modal-root .st-t1{background:var(--warning-soft);color:var(--warning)}
+#shell .st-t2,#modal-root .st-t2{background:var(--accent-soft);color:var(--accent-soft-ink)}
+#shell .st-t3,#modal-root .st-t3{background:var(--success-soft);color:var(--success)}
+#shell .st-t4,#modal-root .st-t4{background:var(--success);color:#fff}
 #shell .s-lost,#modal-root .s-lost{background:var(--danger-soft);color:var(--danger);margin-left:4px}
 
 /* ---- the contacts table ---- */
@@ -366,11 +369,11 @@ body{background:var(--bg);color:var(--text);font-family:var(--font-ui);}
   flex:1 1 90px;text-align:left;background:none;border:0;padding:0;cursor:pointer;color:inherit;
 }
 #shell .mp-bar,#modal-root .mp-bar{display:block;height:6px;border-radius:999px;background:var(--accent);min-width:3px;margin-bottom:5px}
-#shell .mp-bar.s-contacted,#modal-root .mp-bar.s-contacted{background:var(--text-faint)}
-#shell .mp-bar.s-interested,#modal-root .mp-bar.s-interested{background:var(--warning)}
-#shell .mp-bar.s-pilot,#modal-root .mp-bar.s-pilot{background:var(--accent)}
-#shell .mp-bar.s-closed,#modal-root .mp-bar.s-closed{background:var(--success)}
-#shell .mp-bar.s-onboarded,#modal-root .mp-bar.s-onboarded{background:var(--success)}
+#shell .mp-bar.st-t0,#modal-root .mp-bar.st-t0{background:var(--text-faint)}
+#shell .mp-bar.st-t1,#modal-root .mp-bar.st-t1{background:var(--warning)}
+#shell .mp-bar.st-t2,#modal-root .mp-bar.st-t2{background:var(--accent)}
+#shell .mp-bar.st-t3,#modal-root .mp-bar.st-t3{background:var(--success)}
+#shell .mp-bar.st-t4,#modal-root .mp-bar.st-t4{background:var(--success)}
 #shell .mp-n,#modal-root .mp-n{font-size:17px;font-weight:700;margin-right:5px}
 #shell .mp-l,#modal-root .mp-l{font-size:11px;color:var(--text-faint)}
 
@@ -417,3 +420,44 @@ body{background:var(--bg);color:var(--text);font-family:var(--font-ui);}
   background:var(--accent);border-color:transparent;color:#fff;font-weight:650;
 }
 #shell .chk,#modal-root .chk{display:flex;align-items:center;gap:5px;font-size:12.5px;color:var(--text-muted);white-space:nowrap}
+
+/* ---------- the pipeline editor ---------- */
+#shell .pipe-edit,#modal-root .pipe-edit{ display:flex;justify-content:flex-end;margin:-2px 0 10px; }
+#shell .btn-quiet,#modal-root .btn-quiet{
+  background:none;border:1px solid var(--line);color:var(--text-muted);font-size:12px;padding:5px 11px;
+}
+#shell .btn-quiet:hover,#modal-root .btn-quiet:hover{ border-color:var(--accent);color:var(--text); }
+#modal-root .modal-wide{ max-width:680px;width:calc(100vw - 48px); }
+
+#modal-root .stage-edit-list{ display:flex;flex-direction:column;gap:7px;margin:12px 0; }
+#modal-root .stage-edit-row{
+  display:flex;align-items:center;gap:10px;
+  background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:8px 10px;
+}
+#modal-root .se-tone{ width:6px;height:34px;border-radius:999px;flex:0 0 6px; }
+#modal-root .se-fields{ flex:1;display:flex;flex-direction:column;gap:4px;min-width:0; }
+#modal-root .se-label{ font-weight:650;font-size:13.5px; }
+#modal-root .se-hint{ font-size:12px;color:var(--text-muted); }
+#modal-root .se-fields input{
+  width:100%;background:transparent;border:1px solid transparent;border-radius:6px;
+  padding:3px 6px;color:inherit;font:inherit;
+}
+#modal-root .se-fields input:hover{ border-color:var(--line); }
+#modal-root .se-fields input:focus{ border-color:var(--accent);background:var(--surface-2);outline:none; }
+#modal-root .se-count{
+  font-size:11px;font-weight:700;color:var(--text-faint);min-width:24px;text-align:center;
+  background:var(--surface-2);border-radius:999px;padding:3px 7px;
+}
+#modal-root .se-moves{ display:flex;gap:1px;flex:0 0 auto; }
+#modal-root .se-moves .iconbtn{ width:26px;height:26px;font-size:13px; }
+#modal-root .se-moves .iconbtn[disabled]{ opacity:.25;cursor:default; }
+#modal-root .se-moves .iconbtn.danger:hover{ background:var(--danger-soft);color:var(--danger); }
+
+#modal-root .se-add{ display:flex;gap:8px;align-items:center;margin-top:4px; }
+#modal-root .se-add input{ flex:1; }
+#modal-root .se-reassigns{ margin-top:14px;display:flex;flex-direction:column;gap:8px; }
+#modal-root .se-reassign{
+  border:1px solid var(--warning);background:var(--warning-soft);border-radius:10px;
+  padding:10px 12px;font-size:12.5px;display:flex;flex-direction:column;gap:7px;
+}
+#modal-root .se-reassign select{ margin-left:6px; }

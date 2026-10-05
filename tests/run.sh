@@ -41,5 +41,11 @@ echo
 echo "── crm ──────────────────────────────────────────"
 node tcrm.mjs
 echo
+echo "── pipeline stages ──────────────────────────────"
+node tstages.mjs
+echo
+echo "── concurrent editing ───────────────────────────"
+node tedit.mjs
+echo
 echo "── to-do + documents ────────────────────────────"
 node tteam.mjs

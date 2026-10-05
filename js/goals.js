@@ -138,6 +138,15 @@ var state = {
   newCat: {},        // personId -> category chosen in the composer
   newDate: {},       // personId -> ISO date chosen in the composer
   newPrio: {},       // personId -> priority chosen in the composer
+  /* An open "Edit goal" form lives in state, not just in the DOM. It used to be
+     injected straight into the board, so the moment the other founder saved
+     anything the snapshot fired render(), the board was rebuilt and the form —
+     along with everything typed into it — was thrown away. Held here, it is
+     rebuilt by render() like any other part of the page and the text survives
+     in state.drafts. */
+  editing: {},       // goalId -> true
+  editCat: {},       // goalId -> category chosen in the editor
+  editDate: {},      // goalId -> ISO date chosen in the editor
   profiles: {},      // personId -> {photoURL, displayName} shared via the database
   builds: [],        // build-night sessions, newest first
   buildSel: null,    // selected session id
@@ -641,6 +650,7 @@ var boardEl = document.getElementById("board");
 var scoreEl = document.getElementById("scorecard");
 
 function render(){
+  captureCaret();
   renderHeader();
   renderScorecard();
   renderBoard();
@@ -804,6 +814,7 @@ function goalHtml(g){
       : "Feedback or encouragement for "+personById(g.owner).name+"…";
     html +=
       '<div class="detail">'+
+        (state.editing[g.id] ? editFormHtml(g) : '')+
         '<div class="field">'+
           '<label>Priority</label>'+
           prioSet(g.id, prioOf(g))+
@@ -869,6 +880,36 @@ function dateField(scope, iso){
     '<input type="date" data-date="'+esc(scope)+'" value="'+esc(iso||"")+'" aria-label="Target date">'+
     '<div class="daychips">'+chips+'</div>'+
   '</div>';
+}
+
+/* The editor, as markup rather than an injected node. Every field carries a
+   data-draft key, which is what makes it survive a re-render: the input handler
+   mirrors each keystroke into state.drafts, and restoreDrafts() puts the text
+   back after the board is rebuilt. */
+function editFormHtml(g){
+  var id = g.id;
+  var cat  = (state.editCat[id] !== undefined) ? state.editCat[id] : g.category;
+  var date = (state.editDate[id] !== undefined) ? state.editDate[id] : dueISOof(g, state.week);
+  return '<div class="field editform">'+
+    '<label>Edit goal</label>'+
+    '<input type="text" data-draft="etitle:'+esc(id)+'" value="'+esc(g.title)+'">'+
+    '<textarea data-draft="edesc:'+esc(id)+'" style="margin-top:8px;min-height:64px" '+
+      'placeholder="Detail (optional) — context, what done looks like, links">'+esc(g.description||"")+'</textarea>'+
+    '<div style="margin-top:8px"><select data-editcat="'+esc(id)+'">'+categoryOptions(cat)+'</select></div>'+
+    '<div style="margin-top:8px">'+dateField("edit:"+esc(id), date)+'</div>'+
+    '<div class="row" style="display:flex;gap:8px;margin-top:10px">'+
+      '<button class="btn" data-act="editsave" data-id="'+esc(id)+'">Save changes</button>'+
+      '<button class="btn ghost" data-act="editcancel" data-id="'+esc(id)+'">Cancel</button>'+
+    '</div>'+
+  '</div>';
+}
+function closeEditor(id){
+  delete state.editing[id];
+  delete state.drafts["etitle:"+id];
+  delete state.drafts["edesc:"+id];
+  delete state.editCat[id];
+  delete state.editDate[id];
+  if(focusKey==="etitle:"+id || focusKey==="edesc:"+id) focusKey = null;
 }
 
 function addRowHtml(p){
@@ -1420,10 +1461,31 @@ function restoreDrafts(){
   }
   if(focusKey){
     var t = document.querySelector('[data-draft="'+focusKey+'"]');
-    if(t){ t.focus(); if(t.setSelectionRange) try{ t.setSelectionRange(t.value.length,t.value.length); }catch(e){} }
+    if(t){
+      t.focus();
+      /* Put the cursor back where it actually was. Sending it to the end of the
+         field was its own small bug: get a remote update mid-sentence and your
+         next keystroke landed at the end of the paragraph. */
+      var a = focusSel ? focusSel[0] : t.value.length;
+      var b = focusSel ? focusSel[1] : t.value.length;
+      if(a > t.value.length) a = t.value.length;
+      if(b > t.value.length) b = t.value.length;
+      if(t.setSelectionRange) try{ t.setSelectionRange(a, b); }catch(e){}
+    }
   }
+  focusSel = null;
 }
 var focusKey = null;
+var focusSel = null;   // [start,end] in the focused field, carried across a re-render
+/* Must run before the board markup is replaced, so render() calls it first. */
+function captureCaret(){
+  focusSel = null;
+  if(!focusKey) return;
+  var el = document.activeElement;
+  if(!el || !el.getAttribute) return;
+  if(el.getAttribute("data-draft") !== focusKey) return;
+  try{ focusSel = [el.selectionStart, el.selectionEnd]; }catch(e){ focusSel = null; }
+}
 /* Reflections save as you type (debounced), not only when you click away —
    otherwise typing one and closing the tab would lose it. */
 var reflTimer = null, reflPending = null;
@@ -1474,6 +1536,9 @@ document.addEventListener("change", function(e){
     if(scope.indexOf("new:")===0){
       state.newDate[scope.slice(4)] = t.value;
       syncDayChips(scope, t.value);
+    } else if(scope.indexOf("edit:")===0){
+      state.editDate[scope.slice(5)] = t.value;
+      syncDayChips(scope, t.value);
     }
     return;
   }
@@ -1485,7 +1550,9 @@ document.addEventListener("change", function(e){
   if(t.id === "nf-date"){ state.noteDate = t.value; return; }
   if(t.id === "sf-date"){ state.sessionDate = t.value; return; }
   var newcat = t.getAttribute("data-newcat");
-  if(newcat) state.newCat[newcat] = t.value;
+  if(newcat){ state.newCat[newcat] = t.value; return; }
+  var ecat = t.getAttribute("data-editcat");
+  if(ecat) state.editCat[ecat] = t.value;
 });
 /* Keep the quick-pick chips in step with the date input without a full re-render,
    so the open composer never loses what's already typed in it. */
@@ -1605,7 +1672,36 @@ document.addEventListener("click", function(e){
   }
   if(act==="edit"){
     var g5 = findGoal(id); if(!g5) return;
-    openEditor(g5);
+    /* Already open? Leave it alone — re-seeding would wipe what's been typed. */
+    if(!state.editing[id]){
+      state.editing[id] = true;
+      state.drafts["etitle:"+id] = g5.title || "";
+      state.drafts["edesc:"+id]  = g5.description || "";
+      state.editCat[id]  = g5.category;
+      state.editDate[id] = dueISOof(g5, state.week) || "";
+      focusKey = "etitle:"+id;
+    }
+    render();
+    return;
+  }
+  if(act==="editcancel"){ closeEditor(id); render(); return; }
+  if(act==="editsave"){
+    var ge = findGoal(id); if(!ge) return;
+    var newTitle = (state.drafts["etitle:"+id]||"").trim();
+    if(!newTitle){
+      var ti2 = document.querySelector('[data-draft="etitle:'+id+'"]');
+      if(ti2) ti2.focus();
+      return;
+    }
+    ge.title = newTitle;
+    ge.description = (state.drafts["edesc:"+id]||"").trim();
+    if(state.editCat[id] !== undefined) ge.category = state.editCat[id];
+    var ed = state.editDate[id];
+    ge.dueDate = ed ? ed : null;
+    ge.dueDay = null;
+    writeGoal(keyOf(state.week), ge);
+    closeEditor(id);
+    render();
     return;
   }
   if(act==="setprio"){
@@ -1633,6 +1729,7 @@ document.addEventListener("click", function(e){
     var input = document.querySelector('input[type="date"][data-date="'+scope+'"]');
     if(input) input.value = iso;
     if(scope.indexOf("new:")===0) state.newDate[scope.slice(4)] = iso;
+    else if(scope.indexOf("edit:")===0) state.editDate[scope.slice(5)] = iso;
     syncDayChips(scope, iso);
     return;
   }
@@ -1920,38 +2017,6 @@ document.addEventListener("click", function(e){
     return;
   }
 });
-
-function openEditor(g){
-  var row = document.querySelector('[data-act="edit"][data-id="'+g.id+'"]');
-  if(!row) return;
-  var host = row.closest(".detail");
-  var box = document.createElement("div");
-  box.className = "field";
-  box.innerHTML =
-    '<label>Edit goal</label>'+
-    '<input type="text" id="e-title" value="'+esc(g.title)+'">'+
-    '<textarea id="e-desc" style="margin-top:8px;min-height:64px" '+
-      'placeholder="Detail (optional) — context, what done looks like, links">'+esc(g.description||"")+'</textarea>'+
-    '<div style="margin-top:8px"><select id="e-cat">'+categoryOptions(g.category)+'</select></div>'+
-    '<div style="margin-top:8px">'+dateField("edit:"+g.id, dueISOof(g, state.week))+'</div>'+
-    '<div class="row" style="display:flex;gap:8px;margin-top:10px">'+
-      '<button class="btn" id="e-save">Save changes</button>'+
-      '<button class="btn ghost" id="e-cancel">Cancel</button>'+
-    '</div>';
-  host.insertBefore(box, host.firstChild);
-  var t = box.querySelector("#e-title"); t.focus();
-  box.querySelector("#e-cancel").addEventListener("click", function(){ render(); });
-  box.querySelector("#e-save").addEventListener("click", function(){
-    var dEl = box.querySelector('input[type="date"][data-date="edit:'+g.id+'"]');
-    g.title = t.value.trim() || g.title;
-    g.description = box.querySelector("#e-desc").value.trim();
-    g.category = box.querySelector("#e-cat").value;
-    g.dueDate = (dEl && dEl.value) ? dEl.value : null;
-    g.dueDay = null;
-    writeGoal(keyOf(state.week), g);
-    render();
-  });
-}
 
 function carryOver(pid){
   var prevKey = keyOf(addDays(state.week,-7));

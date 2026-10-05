@@ -11,16 +11,53 @@
      · "not interested"      — an exit, not a position. See LOST_REASONS below;
        a lost contact leaves the pipeline but keeps its history.
 --------------------------------------------------------------------------- */
-var STAGES = [
+var DEFAULT_STAGES = [
   { id:"contacted",  label:"Contacted",  hint:"Reached out, nothing back yet" },
   { id:"interested", label:"Interested", hint:"They replied and want to hear more" },
   { id:"pilot",      label:"Pilot",      hint:"Trying it in the practice" },
   { id:"closed",     label:"Closed",     hint:"Signed and paying" },
   { id:"onboarded",  label:"Onboarded",  hint:"Live and using it day to day" }
 ];
+/* The pipeline is editable and shared, so it lives in the database rather than
+   in this file. A stage's `id` is what contacts store and is never rewritten —
+   renaming a stage changes only its label, so no contact has to be touched.
+   Kept in settings/crm, not settings/app: the goals side writes settings/app
+   with set() rather than merge, which would wipe anything else kept there. */
+var STAGES = DEFAULT_STAGES.slice();
 var STAGE_LABEL = {};
 var STAGE_ORDER = {};
-STAGES.forEach(function(s, i){ STAGE_LABEL[s.id] = s.label; STAGE_ORDER[s.id] = i; });
+function rebuildStageMaps(){
+  STAGE_LABEL = {}; STAGE_ORDER = {};
+  STAGES.forEach(function(s, i){ STAGE_LABEL[s.id] = s.label; STAGE_ORDER[s.id] = i; });
+}
+rebuildStageMaps();
+function firstStageId(){ return (STAGES[0] && STAGES[0].id) || "contacted"; }
+function lastStageId(){ return (STAGES[STAGES.length-1] && STAGES[STAGES.length-1].id) || "contacted"; }
+
+/* Colour follows a stage's position in the pipeline, not its name — a stage you
+   invented has to look like something too. The five defaults land on the same
+   tones they always had. */
+function stageTone(i, n){
+  if(n <= 1 || i === n-1) return 4;   // the end of the pipeline
+  if(i === 0) return 0;               // nothing has happened yet
+  if(i === n-2) return 3;             // nearly there
+  return i === 1 ? 1 : 2;
+}
+function stageClass(id){
+  var i = STAGE_ORDER[id];
+  return "st-t" + (i === undefined ? 0 : stageTone(i, STAGES.length));
+}
+function stageLabel(id){ return STAGE_LABEL[id] || id || "—"; }
+
+/* A label typed by a person becomes a stable id. Contacts keep the id, so this
+   runs once per stage, at creation. */
+function stageIdFrom(label){
+  var base = String(label||"").toLowerCase().replace(/[^a-z0-9]+/g,"_").replace(/^_+|_+$/g,"");
+  if(!base) base = "stage";
+  var id = base, n = 2;
+  while(STAGE_LABEL[id] !== undefined){ id = base + "_" + n; n++; }
+  return id;
+}
 
 /* Contacts created before the pipeline existed carry stage "connected", which
    meant "we've actually spoken". That's what Interested means now. Nothing is
@@ -28,9 +65,14 @@ STAGES.forEach(function(s, i){ STAGE_LABEL[s.id] = s.label; STAGE_ORDER[s.id] = 
    is saved the next time that contact is touched for another reason. */
 var LEGACY_STAGE = { connected: "interested" };
 function stageOf(c){
-  var s = (c && c.stage) || "contacted";
-  s = LEGACY_STAGE[s] || s;
-  return STAGE_LABEL[s] ? s : "contacted";
+  var s = (c && c.stage) || firstStageId();
+  if(STAGE_LABEL[s] !== undefined) return s;
+  /* Either a pre-pipeline value, or a stage that has since been deleted from
+     under this contact. Translate what we can, and otherwise put them at the
+     start rather than dropping them out of the pipeline entirely. */
+  var mapped = LEGACY_STAGE[s];
+  if(mapped && STAGE_LABEL[mapped] !== undefined) return mapped;
+  return firstStageId();
 }
 function stageIndex(c){ return STAGE_ORDER[stageOf(c)]; }
 
@@ -92,6 +134,12 @@ var state = {
   sortDesc: false,
   contactsView: "list",
   losingContact: null,  /* contact id while the "why" prompt is open */
+  /* Editing the pipeline works on a copy. Nothing is written until Save, so a
+     half-renamed stage never reaches Garrett's screen, and deletions can ask
+     where their contacts should go before anything moves. */
+  stageDraft: null,     /* working copy of STAGES while the editor is open */
+  stageMoves: {},       /* removed stage id -> stage id its contacts move to */
+  stageErr: "",
   actionsMineOnly: false,
   calMonth: (function(){ var d=new Date(); d.setDate(1); return d; })(),
   calSelected: null,
@@ -318,7 +366,107 @@ function showApp(){ /* the shell controls visibility */ }
 function onSubError(label){
   return function(e){ toast("Live sync for "+label+" stopped ("+friendlyDbError(e)+")", true); };
 }
+/* ---- the editable pipeline, shared across both founders ---- */
+var SKEY_CRM = "tf.crm.settings";
+function validStageList(arr){
+  if(Object.prototype.toString.call(arr) !== "[object Array]" || !arr.length) return null;
+  var out = [], seen = {};
+  for(var i=0;i<arr.length;i++){
+    var s = arr[i];
+    if(!s || typeof s.id !== "string" || !s.id || seen[s.id]) continue;
+    seen[s.id] = true;
+    out.push({ id:s.id, label:String(s.label||s.id), hint:String(s.hint||"") });
+  }
+  return out.length ? out : null;
+}
+function applyStages(arr){
+  var clean = validStageList(arr);
+  if(!clean) return false;
+  STAGES = clean;
+  rebuildStageMaps();
+  return true;
+}
+function subscribeStages(){
+  db.doc("settings/crm").onSnapshot(function(snap){
+    var there = (typeof snap.exists === "function") ? snap.exists() : snap.exists;
+    if(there && applyStages((snap.data()||{}).stages)) scheduleRender();
+  }, function(){});
+}
+function saveStages(){
+  var body = { stages: STAGES.map(function(s){ return {id:s.id, label:s.label, hint:s.hint||""}; }),
+               updatedBy: state.me ? state.me.id : null, updatedAt: new Date().toISOString() };
+  try{ localStorage.setItem(SKEY_CRM, JSON.stringify(body)); }catch(e){}
+  if(!db) return Promise.resolve();
+  return db.doc("settings/crm").set(body).catch(function(e){
+    toast("Couldn't save the pipeline ("+friendlyDbError(e)+")", true);
+  });
+}
+
+/* Validate the draft, move anyone stranded by a deletion, then write the new
+   pipeline. Contacts are moved first: if that half fails we'd rather have the
+   old pipeline with everyone still in a real stage than a new pipeline with
+   contacts pointing at stages that no longer exist. */
+async function saveStageDraft(){
+  var draft = state.stageDraft || [];
+  var labels = {}, i;
+  if(!draft.length){ state.stageErr = "A pipeline needs at least one stage."; return bounceStages(); }
+  for(i=0;i<draft.length;i++){
+    draft[i].label = String(draft[i].label||"").trim();
+    draft[i].hint  = String(draft[i].hint||"").trim();
+    if(!draft[i].label){ state.stageErr = "Every stage needs a name."; return bounceStages(); }
+    var key = draft[i].label.toLowerCase();
+    if(labels[key]){ state.stageErr = 'Two stages are both called "'+draft[i].label+'".'; return bounceStages(); }
+    labels[key] = true;
+  }
+  var ids = {};
+  draft.forEach(function(s){ ids[s.id] = true; });
+  var moves = [];
+  for(var gone in state.stageMoves){
+    if(!Object.prototype.hasOwnProperty.call(state.stageMoves, gone)) continue;
+    var dest = state.stageMoves[gone];
+    if(!ids[dest]){ state.stageErr = "Pick a stage to move contacts into."; return bounceStages(); }
+    moves.push([gone, dest]);
+  }
+
+  var moved = 0;
+  try{
+    for(i=0;i<moves.length;i++){
+      var from = moves[i][0], to = moves[i][1];
+      var stranded = state.contacts.filter(function(c){ return !c.archived && c.stage === from; });
+      for(var j=0;j<stranded.length;j++){
+        await db.collection("contacts").doc(stranded[j].id).update(touchPatch({ stage: to }));
+        moved++;
+      }
+      if(stranded.length){
+        await logActivity("stage_bulk_move", { entityType:"pipeline", summary: "moved "+stranded.length+" contact"+
+          (stranded.length===1?"":"s")+" out of "+stageLabel(from)+" into "+stageLabel(to) });
+      }
+    }
+  }catch(e){
+    state.stageErr = "Couldn't move the contacts ("+friendlyDbError(e)+"). Nothing was changed.";
+    return bounceStages();
+  }
+
+  STAGES = draft.map(function(s){ return {id:s.id, label:s.label, hint:s.hint}; });
+  rebuildStageMaps();
+  await saveStages();
+  await logActivity("stages_changed", { entityType:"pipeline", summary: "changed the pipeline to "+
+    STAGES.map(function(s){ return s.label; }).join(" → ") });
+
+  /* A filter pointing at a stage that's gone would show an empty list. */
+  if(state.stageFilter && STAGE_LABEL[state.stageFilter] === undefined) state.stageFilter = "";
+  state.stageDraft = null; state.stageMoves = {}; state.stageErr = "";
+  $("#modal-root").removeAttribute("data-open");
+  toast(moved ? "Pipeline saved — "+moved+" contact"+(moved===1?"":"s")+" moved." : "Pipeline saved.");
+  render();
+}
+function bounceStages(){
+  $("#modal-root").removeAttribute("data-open");
+  render();
+}
+
 function subscribeAll(){
+  subscribeStages();
   db.collection("contacts").onSnapshot(function(snap){
     state.contacts = snap.docs.map(function(d){ return Object.assign({id:d.id}, d.data()); });
     scheduleRender();
@@ -413,7 +561,7 @@ async function createContact(data){
     /* Default the owner to whoever is adding them. An unowned contact at this
        volume is one neither of you believes is yours. */
     ownerId: data.ownerId || state.me.id,
-    stage: data.stage || "contacted", archived: false,
+    stage: data.stage || firstStageId(), archived: false,
     lost: false, lostReason: null,
     value: (function(){ var n = Number(data.value); return isFinite(n) && n > 0 ? Math.round(n) : null; })(),
     createdBy: state.me.id, createdAt: now, updatedBy: state.me.id, updatedAt: now,
@@ -452,7 +600,7 @@ async function changeStage(contact, newStage, opts){
   if(from !== newStage){
     await logActivity("stage_changed", {contactId:contact.id, contactName:contact.name, entityId:contact.id,
       summary: (opts.because ? opts.because + " — " : "") +
-               "moved " + contact.name + " from " + STAGE_LABEL[from] + " to " + STAGE_LABEL[newStage]});
+               "moved " + contact.name + " from " + stageLabel(from) + " to " + stageLabel(newStage)});
   }
 }
 
@@ -541,7 +689,9 @@ async function logCall(contact, data){
 
   /* Only ever move forward. A later call that goes badly shouldn't quietly
      demote someone who has already signed; that's what "not interested" is for. */
-  if(out && out.stage && STAGE_ORDER[out.stage] > stageIndex(contact)){
+  /* STAGE_ORDER lookup also covers a stage that has since been deleted: the
+     comparison against undefined is false, so nothing moves. */
+  if(out && out.stage && STAGE_ORDER[out.stage] !== undefined && STAGE_ORDER[out.stage] > stageIndex(contact)){
     await changeStage(contact, out.stage, {because:"from a logged "+CALL_TYPE_LABEL[data.type].toLowerCase()});
   }
   return out && out.lost ? "ask_lost_reason" : null;
@@ -664,7 +814,7 @@ function openReminders(contactId){
    onboarded isn't stale, they're just happy; one marked lost isn't either. */
 function isStale(c){
   if(c.archived || c.lost) return false;
-  if(stageOf(c) === "onboarded") return false;
+  if(stageOf(c) === lastStageId()) return false;   // nothing to chase once they're live
   if(openReminders(c.id).length) return false;
   var d = daysSince(lastTouch(c));
   return d !== null && d >= STALE_DAYS;
@@ -962,7 +1112,7 @@ async function renderHome(){
         '<div class="mini-pipe">' + STAGES.map(function(st){
           var b = buckets[st.id];
           return '<button class="mp" data-action="filter-stage" data-stage="'+st.id+'" title="'+esc(st.hint)+'">' +
-            '<span class="mp-bar s-'+st.id+'" style="width:'+Math.round(b.count/pipeTotal*100)+'%"></span>' +
+            '<span class="mp-bar '+stageClass(st.id)+'" style="width:'+Math.round(b.count/pipeTotal*100)+'%"></span>' +
             '<span class="mp-n">'+b.count+'</span><span class="mp-l">'+esc(st.label)+'</span></button>';
         }).join("") + '</div>' +
       '</div>' +
@@ -1080,7 +1230,7 @@ function contactsTableHtml(list, profiles){
       : '<button class="nx-none" data-action="quick-schedule" data-id="'+c.id+'">Nothing scheduled</button>';
 
     return '<tr class="'+(c.lost?"is-lost":"")+'" data-action="open-preview" data-id="'+esc(c.id)+'">' +
-      '<td class="c-stage"><span class="stage s-'+esc(st)+'">'+esc(STAGE_LABEL[st])+'</span>'+
+      '<td class="c-stage"><span class="stage '+stageClass(st)+'">'+esc(stageLabel(st))+'</span>'+
         (c.lost?'<span class="stage s-lost" title="'+esc(LOST_REASON_LABEL[c.lostReason]||"")+'">Lost</span>':'')+'</td>' +
       '<td class="c-name"><span class="nm">'+esc(c.name)+'</span>'+
         (c.title?'<span class="ttl">'+esc(c.title)+'</span>':'')+'</td>' +
@@ -1128,6 +1278,7 @@ function pipelineSummaryHtml(){
     }).join("");
 
   return '<div class="pipeline">'+cols+'</div>' +
+    '<div class="pipe-edit"><button class="btn btn-quiet" data-action="manage-stages">Edit pipeline stages</button></div>' +
     (anyValue ? '<div class="pipe-total">Pipeline value <b>'+esc(fmtMoney(grand))+'/mo</b> '+
                 '<span class="dim">\u00b7 excludes contacts with no value set</span></div>' : '') +
     (lost.length
@@ -1150,7 +1301,7 @@ function contactRowHtml(c, profiles, showPositionPill){
     '<div class="contact-avatar">'+esc(initialsOf(c.name))+'</div>' +
     '<div class="meta"><div class="nm">'+esc(c.name)+'</div><div class="sub">'+esc([c.title,c.company].filter(Boolean).join(" · ")||industryName(c.industryId))+'</div></div>' +
     '<div class="right">' +
-      '<span class="stage s-'+stageOf(c)+'">'+esc(STAGE_LABEL[stageOf(c)])+'</span>' +
+      '<span class="stage '+stageClass(stageOf(c))+'">'+esc(stageLabel(stageOf(c)))+'</span>' +
       (showPositionPill && posName ? '<span class="pill pill-neutral">'+esc(posName)+'</span>' : "") +
       (rem ? reminderStatusPill(rem.dueAt) : "") +
       '<span>'+esc(profileName(c.ownerId, profiles))+'</span>' +
@@ -1200,7 +1351,7 @@ async function renderReminders(){
       '<button class="act-main" data-action="open-preview" data-id="'+esc(r.contactId)+'">' +
         '<span class="nm">'+esc(c ? c.name : "Unknown contact")+'</span>' +
         (c && c.company ? '<span class="co">'+esc(c.company)+'</span>' : '') +
-        (st ? '<span class="stage s-'+esc(st)+'">'+esc(STAGE_LABEL[st])+'</span>' : '') +
+        (st ? '<span class="stage '+stageClass(st)+'">'+esc(stageLabel(st))+'</span>' : '') +
       '</button>' +
       '<span class="act-text">'+esc(r.text||"")+'</span>' +
       '<span class="act-who" title="'+esc(profileName(r.assigneeId, profiles))+'">'+
@@ -1248,7 +1399,7 @@ async function renderReminders(){
             '<button class="act-main" data-action="open-preview" data-id="'+esc(c.id)+'">' +
               '<span class="nm">'+esc(c.name)+'</span>' +
               (c.company ? '<span class="co">'+esc(c.company)+'</span>' : '') +
-              '<span class="stage s-'+esc(stageOf(c))+'">'+esc(STAGE_LABEL[stageOf(c)])+'</span>' +
+              '<span class="stage '+stageClass(stageOf(c))+'">'+esc(stageLabel(stageOf(c)))+'</span>' +
             '</button>' +
             '<span class="act-text dim">nothing scheduled</span>' +
             '<span class="act-who"></span><span class="act-when"></span>' +
@@ -1414,7 +1565,7 @@ async function renderContactFull(id){
         '<h3>'+esc(c.name)+'</h3>' +
         '<div class="role">'+esc([c.title,c.company].filter(Boolean).join(" at ")||"—")+'</div>' +
         '<div style="margin-top:8px;display:flex;gap:8px;flex-wrap:wrap;">' +
-          '<span class="stage s-'+stageOf(c)+'">'+esc(STAGE_LABEL[stageOf(c)])+'</span>' +
+          '<span class="stage '+stageClass(stageOf(c))+'">'+esc(stageLabel(stageOf(c)))+'</span>' +
           '<span class="pill pill-neutral">'+esc(industryName(c.industryId))+'</span>' +
         '</div>' +
       '</div>' +
@@ -1435,7 +1586,7 @@ async function renderContactFull(id){
       '<span class="sp-label">Stage</span>' +
       STAGES.map(function(st){
         var on = stageOf(c) === st.id;
-        return '<button class="sp '+(on?"on s-"+st.id:"")+'" data-action="set-stage" data-id="'+c.id+'" ' +
+        return '<button class="sp '+(on?"on "+stageClass(st.id):"")+'" data-action="set-stage" data-id="'+c.id+'" ' +
           'data-stage="'+st.id+'" title="'+esc(st.hint)+'">'+esc(st.label)+'</button>';
       }).join("") +
       (c.lost
@@ -1592,7 +1743,11 @@ function logCallForm(contactId){
     '<div class="field"><label>When</label><input type="datetime-local" id="call-when-'+contactId+'" value="'+toLocalInputValue(new Date().toISOString())+'"></div>' +
     '<div class="field"><label>How did it go?</label>' +
       '<select id="call-outcome-'+contactId+'">' +
-        CALL_OUTCOMES.map(function(o){
+        /* An outcome whose stage has been renamed away or deleted would be a
+           button that silently does nothing, so it isn't offered. */
+        CALL_OUTCOMES.filter(function(o){
+          return !o.stage || STAGE_ORDER[o.stage] !== undefined;
+        }).map(function(o){
           return '<option value="'+o.id+'">'+esc(o.label)+'</option>';
         }).join("") +
       '</select>' +
@@ -1627,7 +1782,7 @@ function renderModal(){
             '<div style="display:flex;gap:12px;align-items:center;margin-bottom:14px;">' +
               '<div class="contact-avatar" style="width:48px;height:48px;">'+esc(initialsOf(c.name))+'</div>' +
               '<div><div style="font-weight:700;">'+esc([c.title,c.company].filter(Boolean).join(" at ")||"—")+'</div>' +
-              '<span class="stage s-'+stageOf(c)+'">'+esc(STAGE_LABEL[stageOf(c)])+'</span>' +
+              '<span class="stage '+stageClass(stageOf(c))+'">'+esc(stageLabel(stageOf(c)))+'</span>' +
               (positionName(c.positionId) ? ' <span class="pill pill-neutral">'+esc(positionName(c.positionId))+'</span>' : '') +
               '</div>' +
             '</div>' +
@@ -1643,7 +1798,7 @@ function renderModal(){
               '<span class="sp-label">Stage</span>' +
               STAGES.map(function(st){
                 var on = stageOf(c) === st.id;
-                return '<button class="sp '+(on?"on s-"+st.id:"")+'" data-action="set-stage" ' +
+                return '<button class="sp '+(on?"on "+stageClass(st.id):"")+'" data-action="set-stage" ' +
                   'data-id="'+c.id+'" data-stage="'+st.id+'" title="'+esc(st.hint)+'">'+
                   esc(st.label)+'</button>';
               }).join("") +
@@ -1676,6 +1831,17 @@ function renderModal(){
   if(state.editingContact){
     var ek = "edit-"+state.editingContact.id;
     if(root.getAttribute("data-open") !== ek){ root.innerHTML = editContactModalHtml(state.editingContact); root.setAttribute("data-open",ek); }
+    return;
+  }
+  if(state.stageDraft){
+    /* Rebuilt only when the shape changes, never on a keystroke — otherwise
+       typing a stage name would be wiped by the next live update. */
+    var sk = "stages-" + state.stageDraft.length + "-" +
+             Object.keys(state.stageMoves).join(",") + "-" + (state.stageErr ? "e" : "");
+    if(root.getAttribute("data-open") !== sk){
+      root.innerHTML = stagesModalHtml();
+      root.setAttribute("data-open", sk);
+    }
     return;
   }
   if(state.route.confirmDelete){
@@ -1711,6 +1877,85 @@ function renderModal(){
   root.innerHTML = "";
 }
 
+/* ---------- the pipeline editor ---------- */
+function stageContactCount(stageId){
+  return state.contacts.filter(function(c){
+    return !c.archived && (c.stage === stageId || (!c.stage && stageId === firstStageId()));
+  }).length;
+}
+function stagesModalHtml(){
+  var draft = state.stageDraft;
+  var removed = Object.keys(state.stageMoves);
+  var rows = draft.map(function(s, i){
+    var n = s.isNew ? 0 : stageContactCount(s.id);
+    return '<div class="stage-edit-row">' +
+      '<span class="se-tone '+("st-t"+stageTone(i, draft.length))+'"></span>' +
+      '<div class="se-fields">' +
+        '<input type="text" class="se-label" data-stage-field="label" data-idx="'+i+'" ' +
+          'value="'+esc(s.label)+'" placeholder="Stage name" maxlength="28">' +
+        '<input type="text" class="se-hint" data-stage-field="hint" data-idx="'+i+'" ' +
+          'value="'+esc(s.hint||"")+'" placeholder="What this stage means (optional)" maxlength="60">' +
+      '</div>' +
+      '<span class="se-count" title="contacts currently here">'+n+'</span>' +
+      '<div class="se-moves">' +
+        '<button class="iconbtn" data-action="stage-up" data-idx="'+i+'" '+(i===0?"disabled":"")+' title="Earlier in the pipeline">↑</button>' +
+        '<button class="iconbtn" data-action="stage-down" data-idx="'+i+'" '+(i===draft.length-1?"disabled":"")+' title="Later in the pipeline">↓</button>' +
+        '<button class="iconbtn danger" data-action="stage-remove" data-idx="'+i+'" '+
+          (draft.length<=1?"disabled":"")+' title="Remove this stage">✕</button>' +
+      '</div>' +
+    '</div>';
+  }).join("");
+
+  /* Anything removed that still has people in it has to say where they go. */
+  var moveRows = removed.map(function(id){
+    var n = stageContactCount(id);
+    var dest = state.stageMoves[id];
+    var opts = draft.map(function(s){
+      return '<option value="'+esc(s.id)+'"'+(dest===s.id?" selected":"")+'>'+esc(s.label||s.id)+'</option>';
+    }).join("");
+    return '<div class="se-reassign">' +
+      '<div><b>'+esc(stageLabel(id))+'</b> removed — ' +
+        (n ? n+' contact'+(n===1?"":"s")+' need'+(n===1?"s":"")+' somewhere to go' : 'no contacts were in it') +
+      '</div>' +
+      (n ? '<label>Move them to <select data-stage-move="'+esc(id)+'">'+opts+'</select></label>' : '') +
+    '</div>';
+  }).join("");
+
+  return '<div class="overlay" data-overlay="1"><div class="modal modal-wide">' +
+    '<div class="modal-head"><h3>Pipeline stages</h3>' +
+      '<button class="iconbtn" data-action="close-stages">✕</button></div>' +
+    '<div class="modal-body">' +
+      '<p class="hint" style="margin-top:0">Order is the order of the pipeline. Renaming a stage keeps every ' +
+        'contact where they are — only the name on the pill changes.</p>' +
+      '<div class="stage-edit-list">'+rows+'</div>' +
+      '<div class="se-add">' +
+        '<input type="text" id="se-new" placeholder="Add a stage — e.g. Proposal sent" maxlength="28">' +
+        '<button class="btn" data-action="stage-add">Add stage</button>' +
+      '</div>' +
+      (moveRows ? '<div class="se-reassigns">'+moveRows+'</div>' : '') +
+      (state.stageErr ? '<div class="hint" style="color:var(--danger)">'+esc(state.stageErr)+'</div>' : '') +
+    '</div>' +
+    '<div class="modal-foot">' +
+      '<button class="btn" data-action="stage-reset">Reset to the default five</button>' +
+      '<span style="flex:1"></span>' +
+      '<button class="btn" data-action="close-stages">Cancel</button>' +
+      '<button class="btn btn-primary" data-action="stage-save">Save pipeline</button>' +
+    '</div>' +
+  '</div></div>';
+}
+/* Read the label/hint boxes straight out of the DOM at the moment of an action,
+   so typing is never lost to a re-render and no keystroke handler is needed. */
+function syncStageDraftFromDom(){
+  if(!state.stageDraft) return;
+  var nodes = document.querySelectorAll("[data-stage-field]");
+  for(var i=0;i<nodes.length;i++){
+    var n = nodes[i], idx = parseInt(n.getAttribute("data-idx"),10);
+    var row = state.stageDraft[idx];
+    if(!row) continue;
+    row[n.getAttribute("data-stage-field")] = n.value;
+  }
+}
+
 function industrySelectHtml(id, selected){
   var opts = '<option value="">Uncategorized</option>' + state.industries.map(function(i){
     return '<option value="'+i.id+'" '+(selected===i.id?"selected":"")+'>'+esc(i.name)+'</option>';
@@ -1737,10 +1982,14 @@ function newContactModalHtml(){
         '<div class="field"><label>Owner</label>'+peoplePickerHtml("nc-owner", state.me.id)+'</div>' +
       '</div>' +
       positionFieldHtml("nc-position","nc-industry","",null) +
+      /* Driven by the real pipeline. It used to offer a hardcoded "Connected",
+         which stopped being a stage when this became a CRM. */
       '<div class="field"><label>Pipeline stage</label><div class="radio-row">' +
-        '<div class="radio-chip active" data-radio="nc-stage" data-value="contacted">Contacted</div>' +
-        '<div class="radio-chip" data-radio="nc-stage" data-value="connected">Connected</div>' +
-      '</div><input type="hidden" id="nc-stage" value="contacted"></div>' +
+        STAGES.map(function(st, i){
+          return '<div class="radio-chip'+(i===0?" active":"")+'" data-radio="nc-stage" ' +
+                 'data-value="'+esc(st.id)+'" title="'+esc(st.hint||"")+'">'+esc(st.label)+'</div>';
+        }).join("") +
+      '</div><input type="hidden" id="nc-stage" value="'+esc(firstStageId())+'"></div>' +
       '<div class="field"><label>Next step *</label><input type="text" id="nc-nextstep" placeholder="e.g. Send proposal"></div>' +
       '<div class="field-row">' +
         '<div class="field"><label>Reminder due</label><input type="datetime-local" id="nc-due" value="'+toLocalInputValue(plusHoursISO(48))+'"><div class="hint">Defaults to 48 hours from now</div></div>' +
@@ -1919,11 +2168,22 @@ if(gsearch){
   gsearch.addEventListener("input", debounce(function(){ state.search = gsearch.value; render(); }, 180));
 }
 
+/* Where a removed stage's contacts should land. Delegated, because the modal is
+   rebuilt whenever its shape changes. No re-render: the select already shows the
+   new value, and redrawing would only risk losing a half-typed stage name. */
+document.addEventListener("change", function(e){
+  var t = e.target;
+  if(!t || !t.getAttribute) return;
+  var gone = t.getAttribute("data-stage-move");
+  if(gone) state.stageMoves[gone] = t.value;
+});
+
 // ---------- clicks ----------
 document.addEventListener("click", function(e){
   if(e.target.hasAttribute && e.target.hasAttribute("data-overlay")){
     state.route = Object.assign({}, state.route, {modal:null, confirmDelete:null, confirmDeleteIndustry:null, confirmDeletePosition:null});
     state.previewId = null; state.editingContact = null; state.calSelected=null;
+    state.stageDraft = null; state.stageMoves = {}; state.stageErr = "";
     return render();
   }
   var el = e.target.closest("[data-action],[data-nav]");
@@ -1957,6 +2217,65 @@ document.addEventListener("click", function(e){
       state.stageFilter = el.getAttribute("data-stage");
       state.contactsView = "list";
       return render();
+
+    /* ---- editing the pipeline itself ---- */
+    case "manage-stages":
+      state.stageDraft = STAGES.map(function(s){ return {id:s.id, label:s.label, hint:s.hint||""}; });
+      state.stageMoves = {}; state.stageErr = "";
+      return render();
+    case "close-stages":
+      state.stageDraft = null; state.stageMoves = {}; state.stageErr = "";
+      return render();
+    case "stage-up": case "stage-down": {
+      syncStageDraftFromDom();
+      var si = parseInt(el.getAttribute("data-idx"),10);
+      var sj = action === "stage-up" ? si-1 : si+1;
+      var d = state.stageDraft;
+      if(sj < 0 || sj >= d.length) return;
+      var tmp = d[si]; d[si] = d[sj]; d[sj] = tmp;
+      state.stageErr = "";
+      /* The row order changed, so the modal has to be rebuilt. */
+      $("#modal-root").removeAttribute("data-open");
+      return render();
+    }
+    case "stage-remove": {
+      syncStageDraftFromDom();
+      var ri = parseInt(el.getAttribute("data-idx"),10);
+      if(state.stageDraft.length <= 1){
+        state.stageErr = "A pipeline needs at least one stage.";
+        $("#modal-root").removeAttribute("data-open");
+        return render();
+      }
+      var gone = state.stageDraft.splice(ri,1)[0];
+      /* A stage added and removed in the same session never existed, so nobody
+         can be sitting in it. */
+      if(!gone.isNew){
+        var fallback = state.stageDraft[Math.min(ri, state.stageDraft.length-1)].id;
+        state.stageMoves[gone.id] = fallback;
+      }
+      state.stageErr = "";
+      $("#modal-root").removeAttribute("data-open");
+      return render();
+    }
+    case "stage-add": {
+      syncStageDraftFromDom();
+      var ni = $("#se-new");
+      var label = (ni && ni.value || "").trim();
+      if(!label){ if(ni) ni.focus(); return; }
+      state.stageDraft.push({ id: stageIdFrom(label), label: label, hint: "", isNew: true });
+      state.stageErr = "";
+      $("#modal-root").removeAttribute("data-open");
+      return render();
+    }
+    case "stage-reset":
+      state.stageDraft = DEFAULT_STAGES.map(function(s){ return {id:s.id, label:s.label, hint:s.hint}; });
+      state.stageMoves = {}; state.stageErr = "";
+      $("#modal-root").removeAttribute("data-open");
+      return render();
+    case "stage-save":
+      syncStageDraftFromDom();
+      saveStageDraft();
+      return;
     case "actions-scope":
       state.actionsMineOnly = el.getAttribute("data-scope") === "mine";
       return render();

@@ -26,6 +26,13 @@
   }
   let seq = 0;
   window.__STORE = store;
+  /* Stand in for the other founder's browser: write a doc and fire the
+     snapshot listeners, exactly as a remote change would. */
+  window.__REMOTE = (path, data) => {
+    if (data === null) delete store[path];
+    else store[path] = JSON.parse(JSON.stringify(data));
+    notify();
+  };
   window.__FB = {
     signIn: () => { window.__cb({ email: window.__EMAIL || 'samuelgibby89@gmail.com',
                                  displayName: window.__NAME || 'Samuel Gibby', photoURL: '' }); return Promise.resolve(); },

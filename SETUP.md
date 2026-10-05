@@ -1,4 +1,4 @@
-—# Setup — one time, about 30 minutes
+# Setup — one time, about 30 minutes
 
 Three separate things. Do them in this order; each one works on its own, so if you
 stop halfway nothing is broken.
@@ -93,6 +93,28 @@ the form will tell you so if you try.
 
 ---
 
+## The pipeline stages
+
+**Contacts → Pipeline → Edit pipeline stages.** Add, rename, reorder or remove
+stages there. It's shared, so a change shows up on Garrett's screen too.
+
+Two things worth knowing:
+
+- **Renaming is free.** A stage's internal id is what each contact stores, and
+  renaming never touches it. Call "Pilot" something else and every contact stays
+  exactly where they were.
+- **Removing a stage asks where its contacts go.** They're moved before the new
+  pipeline saves, so nobody ends up filed under a stage that no longer exists.
+  The count on each row tells you how many people a removal would affect.
+
+The colour of a stage pill comes from its *position*, not its name — first stage
+grey, last one solid green — so a stage you invent looks like it belongs.
+
+Two things are deliberately **not** stages: a scheduled follow-up (a contact can
+have one at any stage) and "not interested" (an exit, with a reason attached).
+
+---
+
 ## Things that will bite you
 
 **Adding a fourth person** means editing the allow list in **three** places, not one:
@@ -104,6 +126,14 @@ Change only the first and they'll sign in successfully to a board that refuses e
 save. And **`firestore.rules` does not deploy when you push** — publish it by hand from
 the Firebase console, under Firestore → Rules.
 
+**Two people editing at once.** The app takes live updates, so when Garrett saves
+something your screen redraws. Anything you have half-typed is held in state and
+put back afterwards, cursor position included. That only works for fields wired
+up to it — if you add a new form, give its inputs a `data-draft` attribute and
+drive it from state like `addRowHtml` and `editFormHtml` do. Build a form by
+injecting it straight into the DOM instead and the next remote save will delete
+what the other person is typing. `tests/tedit.mjs` exists to catch exactly that.
+
 **Before pushing anything structural,** run the tests:
 
 ```
@@ -112,4 +142,6 @@ npm install
 sh run.sh
 ```
 
-They never touch the real database or real storage.
+They never touch the real database or real storage. Five suites, about a hundred
+checks: the app shell, attachments, the CRM, pipeline-stage editing, and
+concurrent editing.
