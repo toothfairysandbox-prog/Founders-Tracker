@@ -142,6 +142,24 @@ await put('settings/todoScanner', { lastRunAt: new Date().toISOString(), lastSum
 await wait();
 ok('13 last scan shown', /Last scan .*2 added, 1 checked off/.test(await p.$eval('.todo-scan', n => n.textContent)));
 
+// --- adding a task by hand -----------------------------------------------------------
+ok('15 add box defaults to the signed-in person', (await p.$eval('#todo-new-owner', n => n.value)) === 'samuel');
+await p.fill('#todo-new-text', 'Call Dr. Willis about the pilot');
+await p.selectOption('#todo-new-priority', 'high');
+await p.fill('#todo-new-due', day(3));
+await p.press('#todo-new-text', 'Enter'); await wait(500);
+const manual = await p.evaluate(() => Object.values(window.__STORE).find(t => t && t.text === 'Call Dr. Willis about the pilot'));
+ok('15b saved with owner, priority, due and a "by hand" source', !!manual && manual.owner === 'samuel' && manual.priority === 'high' && manual.due === day(3) && manual.status === 'open' && manual.sources[0].kind === 'manual' && manual.createdBy === 'samuel', JSON.stringify(manual));
+ok('15c every field but the checkbox is locked from the scanner', manual && manual.locked.text && manual.locked.owner && manual.locked.priority && manual.locked.due && !manual.locked.status);
+ok('15d it shows in the list and the box is cleared', (await p.$$eval('.todo-text', n => n.map(x => x.textContent))).includes('Call Dr. Willis about the pilot') && (await p.$eval('#todo-new-text', n => n.value)) === '' && (await p.$eval('#todo-new-priority', n => n.value)) === 'normal');
+await p.press('#todo-new-text', 'Enter'); await wait(300);
+ok('15e an empty box adds nothing', (await p.evaluate(() => Object.values(window.__STORE).filter(t => t && t.text === '').length)) === 0);
+await p.fill('#todo-new-text', 'Half typed');
+await put('todos/t10', { text: 'Arrived while typing', owner: 'both', status: 'open', sources: [], createdAt: new Date().toISOString(), createdBy: 'scanner' });
+await wait();
+ok('15f a live update keeps a half-typed task', (await p.$eval('#todo-new-text', n => n.value)) === 'Half typed' && (await p.$$eval('.todo-text', n => n.map(x => x.textContent))).includes('Arrived while typing'));
+await p.fill('#todo-new-text', '');
+
 // --- phone width -------------------------------------------------------------------
 await p.setViewportSize({ width: 375, height: 800 });
 await wait();
