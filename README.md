@@ -120,7 +120,9 @@ Tooth Fairy Slack, Gmail and Claude chats, adds any new tasks to the To-do tab
 and checks off ones that are clearly done. How that works, and the one-time key
 setup it needs, is in [tools/README.md](tools/README.md).
 
-On the page: click a task's text to edit it, change owner / priority / due date
+On the page: type in the **Add a task** box to add one by hand (pick owner,
+priority and an optional due date; the scanner never edits it but can still
+check it off when it sees it's done), click a task's text to edit it, change owner / priority / due date
 in place, untick something the scanner checked off by mistake, or ✕ to delete a
 task that isn't real. Whatever you change, the scanner leaves alone after that,
 and deleted tasks never come back.

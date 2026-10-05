@@ -46,6 +46,14 @@
 #shell .src-gmail{background:#c5221f;}
 #shell .src-claude{background:#c15f3c;}
 #shell .src-aspen{background:#1F8A5F;}
+#shell .src-manual{background:var(--accent);}
+#shell .todo-add{display:flex;flex-wrap:wrap;align-items:center;gap:8px;padding:10px 12px;margin-bottom:18px;}
+#shell #todo-new-text{flex:1;min-width:200px;border:none;background:transparent;font:inherit;font-size:14.5px;padding:6px 4px;}
+#shell #todo-new-text:focus{outline:none;}
+#shell .todo-add:focus-within{border-color:var(--accent);}
+#shell .todo-add-meta{display:flex;align-items:center;gap:6px;flex-wrap:wrap;}
+#shell #todo-new-due{border:1px solid var(--border);border-radius:999px;padding:3px 8px;font:inherit;font-size:12px;
+  background:var(--surface);color:var(--text-muted);}
 #shell .todo-done{font-size:12px;color:var(--success);font-weight:600;}
 #shell .todo-del{flex:none;opacity:.45;}
 #shell .todo-row:hover .todo-del{opacity:1;}

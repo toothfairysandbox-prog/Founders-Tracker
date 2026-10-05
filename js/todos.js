@@ -151,6 +151,33 @@ function remove(t){
   });
 }
 
+/* Typed in on the page. A person wrote every field, so they're all locked
+   from the scanner, except the checkbox: it can still tick this off when a
+   chat or email shows it's done. */
+function addManual(fields){
+  var m = me();
+  var text = (fields.text || "").trim().slice(0, 300);
+  if(!text) return Promise.resolve(false);
+  var now = nowIso();
+  var who = m ? m.id : "";
+  return db.collection("todos").add({
+    text: text,
+    owner: fields.owner || "both",
+    priority: fields.priority || "normal",
+    due: fields.due || null,
+    status: "open",
+    sources: [{ kind:"manual", label: WHO_LABEL[who] || "", quote:null, url:null, at: now, ref:"manual:" + who + ":" + now }],
+    locked: { text:true, owner:true, priority:true, due:true },
+    createdAt: now, createdBy: who, updatedAt: now, updatedBy: who
+  }).then(function(){ return true; }, function(err){ fail(err); return false; });
+}
+var WHO_LABEL = { garrett:"Garrett", samuel:"Sam", team:"Team account" };
+/* Whose task a new one is by default: yours, or both from the shared account. */
+function defaultOwner(){
+  var m = me();
+  return m && (m.id === "garrett" || m.id === "samuel") ? m.id : "both";
+}
+
 /* ---------- view ---------- */
 
 function sortOpen(a, b){
@@ -246,6 +273,21 @@ function render(){
       '<span class="todo-scan" title="Scans Slack, Gmail and Claude chats at 7 AM and 9 PM">' + scanLine + '</span>' +
     '</div>';
 
+  var addForm =
+    '<form class="panel todo-add" id="todo-add" autocomplete="off">' +
+      '<input type="text" id="todo-new-text" maxlength="300" placeholder="Add a task…" aria-label="New task">' +
+      '<div class="todo-add-meta">' +
+        '<select id="todo-new-owner" class="todo-sel" aria-label="Owner">' +
+          OWNERS.map(function(o){ return '<option value="' + o.id + '"' + (o.id === defaultOwner() ? ' selected' : '') + '>' + o.label + '</option>'; }).join("") +
+        '</select>' +
+        '<select id="todo-new-priority" class="todo-sel" aria-label="Priority">' +
+          PRIORITIES.map(function(p){ return '<option value="' + p.id + '"' + (p.id === "normal" ? ' selected' : '') + '>' + p.label + '</option>'; }).join("") +
+        '</select>' +
+        '<input type="date" id="todo-new-due" aria-label="Due date (optional)" title="Due date (optional)">' +
+        '<button type="submit" class="btn btn-sm btn-primary">Add</button>' +
+      '</div>' +
+    '</form>';
+
   var body = "";
   if(state.show === "open"){
     var overdue = open.filter(isOverdue), rest = open.filter(function(t){ return !isOverdue(t); });
@@ -258,7 +300,22 @@ function render(){
     body = doneAll.length ? section("Done", doneAll, "dim")
                           : '<div class="panel empty"><div class="big-ico">✓</div>Nothing checked off yet.</div>';
   }
-  root.innerHTML = '<div class="team-wrap">' + toolbar + body + '</div>';
+  /* A live update redraws the page; don't lose a half-typed new task. */
+  var draft = null, nt = $("todo-new-text");
+  if(nt){
+    draft = { text: nt.value, owner: $("todo-new-owner").value, priority: $("todo-new-priority").value,
+              due: $("todo-new-due").value, focus: document.activeElement && document.activeElement.id,
+              caret: nt.selectionStart };
+  }
+  root.innerHTML = '<div class="team-wrap">' + toolbar + addForm + body + '</div>';
+  if(draft){
+    $("todo-new-text").value = draft.text;
+    $("todo-new-owner").value = draft.owner;
+    $("todo-new-priority").value = draft.priority;
+    $("todo-new-due").value = draft.due;
+    var f = draft.focus && $(draft.focus);
+    if(f){ f.focus(); if(f.id === "todo-new-text") f.setSelectionRange(draft.caret, draft.caret); }
+  }
 
   if(state.editingId){
     var ta = $("todo-edit-" + state.editingId);
@@ -317,6 +374,20 @@ document.addEventListener("change", function(e){
   if(act === "owner") return patch(t.id, { owner: el.value }, ["owner"]);
   if(act === "priority") return patch(t.id, { priority: el.value }, ["priority"]);
   if(act === "due") return patch(t.id, { due: el.value || null }, ["due"]);
+});
+document.addEventListener("submit", function(e){
+  if(e.target.id !== "todo-add") return;
+  e.preventDefault();
+  var input = $("todo-new-text");
+  var fields = { text: input.value, owner: $("todo-new-owner").value,
+                 priority: $("todo-new-priority").value, due: $("todo-new-due").value || null };
+  if(!fields.text.trim()){ input.focus(); return; }
+  /* Clear straight away so a second Enter can't add it twice; put it back if the save fails. */
+  input.value = ""; $("todo-new-due").value = ""; $("todo-new-priority").value = "normal";
+  addManual(fields).then(function(ok){
+    if(!ok){ var i = $("todo-new-text"); if(i && !i.value) i.value = fields.text; }
+    var again = $("todo-new-text"); if(again) again.focus();
+  });
 });
 document.addEventListener("keydown", function(e){
   if(!state.editingId || !e.target.classList || !e.target.classList.contains("todo-edit")) return;
