@@ -37,6 +37,12 @@ const SEED = `
   // further along, with a value
   C('c_closed', { name:'Dr. Signed', company:'Paying Practice', stage:'closed', value:250,
                   ownerId:'samuel', createdAt:'${daysAgo(20)}', lastTouchedAt:'${daysAgo(2)}' });
+  // specialties within dentistry, for the specialty sort
+  S['industries/ind_dent'] = { name:'Dentistry', createdAt: now };
+  S['positions/p_perio'] = { industryId:'ind_dent', name:'Periodontist', createdAt: now };
+  S['positions/p_ortho'] = { industryId:'ind_dent', name:'Orthodontist', createdAt: now };
+  S['contacts/c_garrett'].industryId = 'ind_dent'; S['contacts/c_garrett'].positionId = 'p_perio';
+  S['contacts/c_closed'].industryId  = 'ind_dent'; S['contacts/c_closed'].positionId  = 'p_ortho';
   // fresh, to receive a logged call in the test
   C('c_fresh',  { name:'Dr. Fresh', company:'New Lead Dental', stage:'contacted',
                   ownerId:'samuel', createdAt: now, lastTouchedAt: now });
@@ -218,6 +224,19 @@ await p.waitForTimeout(400);
 const desc = (await rows()).map(r => r.name);
 ok('7b clicking again reverses it', desc.join('|') === names.slice().reverse().join('|'));
 
+await p.click('th[data-sort="specialty"]');
+await p.waitForTimeout(400);
+const bySpec = (await rows()).map(r => r.name);
+ok('7c sorting by specialty puts specialties first, alphabetically',
+   /Signed/.test(bySpec[0]) && /Garrett Lead/.test(bySpec[1]), bySpec.join(' | '));
+await p.click('th[data-sort="specialty"]');
+await p.waitForTimeout(400);
+const bySpecDesc = (await rows()).map(r => r.name);
+ok('7d reversing keeps contacts with no specialty at the bottom',
+   /Garrett Lead/.test(bySpecDesc[0]) && /Signed/.test(bySpecDesc[1]), bySpecDesc.join(' | '));
+ok('7e the specialty shows in its column',
+   await p.$$eval('.ctable td.c-spec', ns => ns.some(n => n.textContent === 'Orthodontist')));
+
 // --- 8. action items grouped by urgency ------------------------------------
 await p.click('[data-nav="reminders"]');
 await p.waitForTimeout(700);
@@ -233,6 +252,84 @@ ok('8d gone-quiet contacts appear here too', /Gone quiet/.test(actionsText));
 ok('8e a contact marked not interested is no longer chased',
    !/Dr\. Quiet/.test(actionsText));
 ok('8f but one that is genuinely dormant still is', /Dr\. Dormant/.test(actionsText));
+
+// --- 9. logging a conversation straight from the preview -------------------
+await p.click('[data-nav="contacts"]'); await p.waitForTimeout(600);
+await p.click('tr:has(.nm:text("Dr. Garrett Lead"))');
+await p.waitForTimeout(500);
+const touchBefore = await p.$eval('#modal-root .pv-touch', n => n.textContent).catch(() => '');
+await p.click('#modal-root [data-action="preview-log-call"]');
+await p.waitForTimeout(300);
+const pNotes = '#modal-root [data-draft^="pcall:"][data-draft$=":notes"]';
+ok('9 the preview opens a log form in place', await p.$$eval(pNotes, n => n.length === 1));
+ok('9b without leaving for the full contact page',
+   await p.$$eval('[data-action="set-contact-tab"]', n => n.length === 0));
+
+// cancel collapses it, and reopening starts empty
+await p.fill(pNotes, 'throw this away');
+await p.click('#modal-root [data-action="cancel-preview-call"]');
+await p.waitForTimeout(300);
+ok('9c cancel collapses the form', await p.$$eval(pNotes, n => n.length === 0));
+await p.click('#modal-root [data-action="preview-log-call"]');
+await p.waitForTimeout(300);
+ok('9d and reopening starts from a blank note', await p.$eval(pNotes, n => n.value) === '');
+
+// half-typed text, caret mid-word, then Garrett saves something
+const PTYPED = 'Walked through the chart-note flow with the front desk';
+await p.selectOption('#modal-root [id^="pcall-type-"]', 'video');
+await p.fill(pNotes, PTYPED);
+const PCARET = PTYPED.indexOf('chart-note') + 5;
+await p.evaluate(({ sel, c }) => {
+  const el = document.querySelector(sel); el.focus(); el.setSelectionRange(c, c);
+}, { sel: pNotes, c: PCARET });
+await p.evaluate(() => window.__REMOTE('contacts/c_remote', {
+  name: 'Dr. Remote Add', company: 'Elsewhere Dental', stage: 'contacted', ownerId: 'garrett',
+  archived: false, lost: false, createdAt: new Date().toISOString(), lastTouchedAt: new Date().toISOString()
+}));
+await p.waitForTimeout(600);
+const pAfter = await p.evaluate((sel) => {
+  const t = document.querySelector(sel);
+  return { there: !!t, val: t ? t.value : null, focused: !!t && document.activeElement === t,
+           caret: t ? t.selectionStart : null,
+           type: (document.querySelector('#modal-root [id^="pcall-type-"]') || {}).value,
+           arrived: [...document.querySelectorAll('.ctable .nm')].some(n => /Remote Add/.test(n.textContent)) };
+}, pNotes);
+ok('9e the remote contact did arrive', pAfter.arrived);
+ok('9f the preview form survived the remote save', pAfter.there);
+ok('9g half-typed notes intact', pAfter.val === PTYPED, JSON.stringify(pAfter.val));
+ok('9h the picked type is intact too', pAfter.type === 'video', pAfter.type);
+ok('9i cursor still where it was, field still focused', pAfter.focused && pAfter.caret === PCARET,
+   JSON.stringify({ focused: pAfter.focused, caret: pAfter.caret, want: PCARET }));
+
+// save: stays on the preview, writes the call, says so, updates the info
+await p.selectOption('#modal-root [id^="pcall-outcome-"]', 'spoke');
+await p.click('#modal-root [data-action="save-preview-call"]');
+await p.waitForTimeout(900);
+const loggedCall = await p.evaluate(() => Object.keys(window.__STORE)
+  .filter(k => k.startsWith('calls/')).map(k => window.__STORE[k])
+  .find(c => c.contactId === 'c_garrett'));
+ok('9j the conversation was saved through the normal path',
+   !!loggedCall && loggedCall.notes === PTYPED && loggedCall.type === 'video' && loggedCall.outcome === 'spoke',
+   JSON.stringify(loggedCall));
+ok('9k still on the preview afterwards',
+   await p.$$eval('#modal-root .modal-head h3', ns => ns.some(n => /Garrett Lead/.test(n.textContent))));
+ok('9l the form closed', await p.$$eval(pNotes, n => n.length === 0));
+ok('9m a toast confirms it',
+   /logged/i.test(await p.$eval('#ct-toast', n => n.textContent).catch(() => '')));
+const touchAfter = await p.$eval('#modal-root .pv-touch', n => n.textContent).catch(() => '');
+ok('9n last touch on the preview reflects it', /just now/.test(touchAfter) && touchAfter !== touchBefore,
+   JSON.stringify([touchBefore, touchAfter]));
+ok('9o and a later stage is never pulled back', (await contact('c_garrett')).stage === 'pilot');
+
+// closing the preview throws away an open form
+await p.click('#modal-root [data-action="preview-log-call"]');
+await p.waitForTimeout(300);
+await p.fill(pNotes, 'abandoned');
+await p.click('#modal-root .modal-foot [data-action="close-modal"]');
+await p.waitForTimeout(300);
+await p.click('tr:has(.nm:text("Dr. Garrett Lead"))');
+await p.waitForTimeout(500);
+ok('9p closing the preview resets the form', await p.$$eval(pNotes, n => n.length === 0));
 
 console.log('ERRORS:', errs.length ? JSON.stringify(errs.slice(0, 6), null, 1) : '[]');
 await b.close();

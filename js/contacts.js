@@ -146,8 +146,14 @@ var state = {
   profileCache: {},
   editingContact: null,
   completingReminderId: null,
-  showNextStepAfter: null
+  showNextStepAfter: null,
+  /* The "log a conversation" form inside the contact preview. Held here, not in
+     the DOM, because the preview is rebuilt on every live update — a form that
+     only existed as markup would vanish mid-sentence when Garrett saved
+     something. {id, seq, type, dur, when, outcome, notes} or null. */
+  previewCall: null
 };
+var previewCallSeq = 0;   /* bumped per opening, so stale draft keys never match */
 
 var db = null, roomApi = null, userApi = null;
 var notesUnsub = null, callsUnsub = null;
@@ -879,6 +885,16 @@ function visibleContacts(){
     switch(state.sortBy){
       case "name":    return dir * (a.name||"").localeCompare(b.name||"");
       case "company": return dir * (a.company||"").localeCompare(b.company||"");
+      /* Specialty is the contact's position within its industry (Orthodontist,
+         Periodontist…). Contacts with none sink in either direction, and ties
+         fall back to name so each specialty reads alphabetically. */
+      case "specialty": {
+        var pa = positionName(a.positionId), pb = positionName(b.positionId);
+        if(!pa && !pb) return (a.name||"").localeCompare(b.name||"");
+        if(!pa) return 1;
+        if(!pb) return -1;
+        return dir * pa.localeCompare(pb) || (a.name||"").localeCompare(b.name||"");
+      }
       case "recent":  return dir * (new Date(b.createdAt) - new Date(a.createdAt));
       case "stage":   return dir * (stageIndex(a) - stageIndex(b) ||
                                     (a.name||"").localeCompare(b.name||""));
@@ -1214,6 +1230,7 @@ function contactsTableHtml(list, profiles){
   }
   var head = '<thead><tr>' +
       th("stage","Stage","c-stage") + th("name","Name") + th("company","Practice") +
+      th("specialty","Specialty","c-spec") +
       th("owner","Owner","c-owner") + th("value","Value","c-val") +
       th("touched","Last touch","c-touch") + th("due","Next action","c-next") +
     '</tr></thead>';
@@ -1235,6 +1252,7 @@ function contactsTableHtml(list, profiles){
       '<td class="c-name"><span class="nm">'+esc(c.name)+'</span>'+
         (c.title?'<span class="ttl">'+esc(c.title)+'</span>':'')+'</td>' +
       '<td class="c-co">'+esc(c.company || industryName(c.industryId))+'</td>' +
+      '<td class="c-spec">'+(positionName(c.positionId)?esc(positionName(c.positionId)):'<span class="dim">–</span>')+'</td>' +
       '<td class="c-owner">'+(c.ownerId
           ? '<span class="ownerchip" title="'+esc(profileName(c.ownerId, profiles))+'">'+
             esc(whoInitials(c.ownerId, profiles))+'</span>'
@@ -1734,29 +1752,61 @@ function noteComposerHtml(contactId){
     '<div class="foot-row"><button class="btn btn-primary btn-sm" data-action="add-note" data-id="'+contactId+'">Save note</button></div>' +
   '</div>';
 }
-function logCallForm(contactId){
-  return '<div class="panel" style="padding:16px;margin-top:10px;">' +
+/* One form, two homes: the Calls tab on the full contact page, and the preview
+   popup. Pass `draft` (state.previewCall) for the preview — its fields get a
+   "pcall" id prefix so they can't collide with the full-page form, take their
+   values from state, and carry data-draft keys so a live re-render puts back
+   whatever was half-typed. */
+function logCallForm(contactId, draft){
+  var px = draft ? "pcall" : "call";
+  var dk = function(f){ return draft ? ' data-draft="pcall:'+draft.seq+':'+f+'"' : ''; };
+  var type = draft ? draft.type : "call";
+  var types = [["call","Call"],["video","Video meeting"],["in_person","In person"],["other","Other"]];
+  return '<div class="panel'+(draft?' preview-call':'')+'" style="padding:16px;margin-top:10px;">' +
     '<div class="field-row">' +
-      '<div class="field"><label>Type</label><select id="call-type-'+contactId+'"><option value="call">Call</option><option value="video">Video meeting</option><option value="in_person">In person</option><option value="other">Other</option></select></div>' +
-      '<div class="field"><label>Duration (min)</label><input type="number" id="call-dur-'+contactId+'" value="15" min="0"></div>' +
+      '<div class="field"><label>Type</label><select id="'+px+'-type-'+contactId+'"'+dk("type")+'>' +
+        types.map(function(t){
+          return '<option value="'+t[0]+'"'+(type===t[0]?' selected':'')+'>'+t[1]+'</option>';
+        }).join("") +
+      '</select></div>' +
+      '<div class="field"><label>Duration (min)</label><input type="number" id="'+px+'-dur-'+contactId+'"'+dk("dur")+' value="'+esc(draft ? draft.dur : "15")+'" min="0"></div>' +
     '</div>' +
-    '<div class="field"><label>When</label><input type="datetime-local" id="call-when-'+contactId+'" value="'+toLocalInputValue(new Date().toISOString())+'"></div>' +
+    '<div class="field"><label>When</label><input type="datetime-local" id="'+px+'-when-'+contactId+'"'+dk("when")+' value="'+esc(draft ? draft.when : toLocalInputValue(new Date().toISOString()))+'"></div>' +
     '<div class="field"><label>How did it go?</label>' +
-      '<select id="call-outcome-'+contactId+'">' +
+      '<select id="'+px+'-outcome-'+contactId+'"'+dk("outcome")+'>' +
         /* An outcome whose stage has been renamed away or deleted would be a
            button that silently does nothing, so it isn't offered. */
         CALL_OUTCOMES.filter(function(o){
           return !o.stage || STAGE_ORDER[o.stage] !== undefined;
         }).map(function(o){
-          return '<option value="'+o.id+'">'+esc(o.label)+'</option>';
+          return '<option value="'+o.id+'"'+(draft && draft.outcome===o.id?' selected':'')+'>'+esc(o.label)+'</option>';
         }).join("") +
       '</select>' +
       '<div class="hint">This is what moves them along the pipeline \u2014 you shouldn\u2019t ' +
       'have to set the stage separately.</div></div>' +
-    '<div class="field"><label>Notes</label><textarea id="call-notes-'+contactId+'" rows="2" placeholder="What did you cover?"></textarea></div>' +
-    '<button class="btn btn-primary btn-sm" data-action="save-call" data-id="'+contactId+'">Save conversation</button>' +
+    '<div class="field"><label>Notes</label><textarea id="'+px+'-notes-'+contactId+'"'+dk("notes")+' rows="2" placeholder="What did you cover?">'+(draft ? esc(draft.notes) : '')+'</textarea></div>' +
+    (draft
+      ? '<div class="pc-actions">' +
+          '<button class="btn btn-primary btn-sm" data-action="save-preview-call" data-id="'+contactId+'">Save conversation</button>' +
+          '<button class="btn btn-sm btn-ghost" data-action="cancel-preview-call">Cancel</button>' +
+        '</div>'
+      : '<button class="btn btn-primary btn-sm" data-action="save-call" data-id="'+contactId+'">Save conversation</button>') +
   '</div>';
 }
+/* Keystrokes in the preview form go straight into state.previewCall, so the
+   next render — ours or one triggered by the other founder — rebuilds the form
+   with them in it. The seq check drops input from a form that has since been
+   closed and reopened. */
+function syncPreviewCallField(e){
+  var t = e.target;
+  var k = t && t.getAttribute && t.getAttribute("data-draft");
+  if(!k || k.indexOf("pcall:") !== 0 || !state.previewCall) return;
+  var parts = k.split(":");
+  if(+parts[1] !== state.previewCall.seq) return;
+  state.previewCall[parts[2]] = t.value;
+}
+document.addEventListener("input", syncPreviewCallField);
+document.addEventListener("change", syncPreviewCallField);
 
 function peoplePickerHtml(fieldId, selectedId){
   var nm = selectedId ? profileName(selectedId) : "Unassigned";
@@ -1770,10 +1820,21 @@ function renderModal(){
   var root = $("#modal-root");
   var formOpen = state.route.modal === "new-contact" || state.route.modal === "new-event" || state.editingContact;
   if(!formOpen) root.removeAttribute("data-open");
+  /* A log form belongs to one preview. Closing it, or switching to someone
+     else, throws the form away rather than carrying it to the next contact. */
+  if(state.previewCall && state.previewCall.id !== state.previewId) state.previewCall = null;
   if(state.previewId){
     var c = state.contacts.find(function(x){return x.id===state.previewId;});
     if(!c){ root.innerHTML=""; return; }
     var rem = activeReminderFor(c.id);
+    /* The preview is rebuilt wholesale, so note which draft field had the
+       cursor (and where in it) to put it back afterwards. */
+    var pcFocus = null, ae = document.activeElement;
+    if(ae && root.contains(ae) && ae.getAttribute("data-draft")){
+      pcFocus = {key: ae.getAttribute("data-draft"), sel: null};
+      try{ pcFocus.sel = [ae.selectionStart, ae.selectionEnd]; }catch(e){}
+    }
+    var touched = lastTouch(c);
     root.innerHTML =
       '<div class="overlay" data-overlay="1">' +
         '<div class="modal">' +
@@ -1789,7 +1850,8 @@ function renderModal(){
             (c.email?'<div style="font-size:13px;margin-bottom:4px;">✉ <a href="mailto:'+esc(c.email)+'">'+esc(c.email)+'</a></div>':'') +
             (c.phone?'<div style="font-size:13px;margin-bottom:4px;">📞 <a href="tel:'+esc(c.phone)+'">'+esc(c.phone)+'</a></div>':'') +
             (c.linkedin?'<div style="font-size:13px;margin-bottom:4px;">in <a href="'+esc(c.linkedin)+'" target="_blank" rel="noopener">LinkedIn profile</a></div>':'') +
-            (rem ? '<div class="hint" style="margin-top:10px;">Next: '+esc(rem.text)+' \u2014 '+fmtDateTime(rem.dueAt)+'</div>' : '') +
+            (touched ? '<div class="hint pv-touch" style="margin-top:10px;">Last touch: '+timeAgo(touched)+'</div>' : '') +
+            (rem ? '<div class="hint" style="margin-top:'+(touched?'2':'10')+'px;">Next: '+esc(rem.text)+' \u2014 '+fmtDateTime(rem.dueAt)+'</div>' : '') +
             /* The stage controls belong here, not only on the full-screen view.
                This panel is what you open while working a list, and changing
                where someone sits is the most common thing you'll want to do
@@ -1810,6 +1872,11 @@ function renderModal(){
             (c.lost ? '<div class="lost-note">Not interested \u2014 <b>'+
                       esc(LOST_REASON_LABEL[c.lostReason]||"no reason given")+'</b>'+
                       (c.lostNote?'. '+esc(c.lostNote):'')+'</div>' : '') +
+            /* Logging a call is the other thing you do while working a list,
+               so it lives here too instead of only behind "Open full screen". */
+            (state.previewCall
+              ? logCallForm(c.id, state.previewCall)
+              : '<button class="btn btn-sm" data-action="preview-log-call" data-id="'+c.id+'">+ Log a conversation</button>') +
           '</div>' +
           '<div class="modal-foot">' +
             '<button class="btn" data-action="close-modal">Close</button>' +
@@ -1818,6 +1885,13 @@ function renderModal(){
           '</div>' +
         '</div>' +
       '</div>';
+    if(pcFocus){
+      var back = root.querySelector('[data-draft="'+pcFocus.key+'"]');
+      if(back){
+        back.focus();
+        if(pcFocus.sel && back.setSelectionRange) try{ back.setSelectionRange(pcFocus.sel[0], pcFocus.sel[1]); }catch(e){}
+      }
+    }
     return;
   }
   if(state.route.modal === "new-contact"){
@@ -2327,7 +2401,17 @@ document.addEventListener("click", function(e){
       state.previewId = null; state.editingContact = null; state.calSelected=null;
       return render();
     case "open-preview":
-      state.previewId = id; return render();
+      state.previewId = id; state.previewCall = null; return render();
+    case "preview-log-call":
+      state.previewCall = {id:id, seq:++previewCallSeq, type:"call", dur:"15",
+        when: toLocalInputValue(new Date().toISOString()), outcome:"no_answer", notes:""};
+      render();
+      var pn = $("#pcall-notes-"+id);
+      if(pn) pn.focus();
+      return;
+    case "cancel-preview-call":
+      state.previewCall = null; return render();
+    case "save-preview-call": return doSaveCall(id, true);
     case "open-full":
       state.previewId = null;
       state.contactTab = "overview";
@@ -2479,17 +2563,25 @@ async function doAddNote(contactId){
     render();
   }catch(e){ if(err) err.textContent = friendlyDbError(e); else toast(friendlyDbError(e), true); }
 }
-async function doSaveCall(contactId){
+/* fromPreview: the form in the preview popup rather than the Calls tab. Same
+   save, but it reads the "pcall" fields and stays on the preview afterwards. */
+async function doSaveCall(contactId, fromPreview){
   var c = state.contacts.find(function(x){return x.id===contactId;});
+  if(!c) return;
+  var px = fromPreview ? "#pcall-" : "#call-";
   try{
     var outcome = await logCall(c, {
-      type: $("#call-type-"+contactId).value,
-      occurredAt: fromLocalInputValue($("#call-when-"+contactId).value),
-      durationMinutes: $("#call-dur-"+contactId).value,
-      outcome: (function(){ var el = $("#call-outcome-"+contactId); return el ? el.value : null; })(),
-      notes: $("#call-notes-"+contactId).value.trim()
+      type: $(px+"type-"+contactId).value,
+      occurredAt: fromLocalInputValue($(px+"when-"+contactId).value),
+      durationMinutes: $(px+"dur-"+contactId).value,
+      outcome: (function(){ var el = $(px+"outcome-"+contactId); return el ? el.value : null; })(),
+      notes: $(px+"notes-"+contactId).value.trim()
     });
-    state.route = Object.assign({}, state.route, {showCallForm:false});
+    if(fromPreview){
+      state.previewCall = null;
+      toast("Conversation with "+c.name+" logged");
+    }
+    else state.route = Object.assign({}, state.route, {showCallForm:false});
     /* "Not interested" on a call drops straight into the reason prompt rather
        than leaving them parked in whatever stage they were in. */
     if(outcome === "ask_lost_reason") state.losingContact = contactId;

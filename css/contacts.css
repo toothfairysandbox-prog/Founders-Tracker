@@ -261,6 +261,7 @@ body{background:var(--bg);color:var(--text);font-family:var(--font-ui);}
 #shell .ctable .c-name .nm,#modal-root .ctable .c-name .nm{font-weight:650;display:block}
 #shell .ctable .c-name .ttl,#modal-root .ctable .c-name .ttl{display:block;font-size:11.5px;color:var(--text-faint)}
 #shell .ctable .c-co,#modal-root .ctable .c-co{color:var(--text-muted)}
+#shell .ctable .c-spec,#modal-root .ctable .c-spec{color:var(--text-muted);white-space:nowrap}
 #shell .ctable .c-val,#modal-root .ctable .c-val{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
 #shell .ctable .c-touch,#modal-root .ctable .c-touch{text-align:right;font-variant-numeric:tabular-nums;color:var(--text-faint)}
 /* The one cell allowed to shout: a contact nobody has touched in a fortnight. */
@@ -405,6 +406,9 @@ body{background:var(--bg);color:var(--text);font-family:var(--font-ui);}
   font-size:12.5px;color:var(--danger);background:var(--danger-soft);
   border-radius:8px;padding:7px 11px;margin-bottom:12px;
 }
+/* ---- logging a conversation from the contact preview ---- */
+#shell .preview-call,#modal-root .preview-call{box-shadow:none;background:var(--surface-2);margin-bottom:4px}
+#shell .pc-actions,#modal-root .pc-actions{display:flex;gap:7px}
 #shell .inline-sel,#modal-root .inline-sel{font-size:13px;padding:3px 6px;max-width:100%}
 #shell .val-edit,#modal-root .val-edit{display:inline-flex;align-items:center;gap:4px}
 #shell .val-edit input,#modal-root .val-edit input{width:88px;font-size:13px;padding:3px 6px}
