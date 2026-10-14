@@ -324,24 +324,6 @@ body{background:var(--bg);color:var(--text);font-family:var(--font-ui);}
   background:var(--surface-2);font-size:11px;color:var(--text-muted);
 }
 
-/* ---- "gone quiet" banner ---- */
-#shell .gone-quiet,#modal-root .gone-quiet{
-  border:1px solid var(--danger);background:var(--danger-soft);
-  border-radius:12px;padding:12px 14px;margin-bottom:14px;
-}
-#shell .gq-head,#modal-root .gq-head{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:8px}
-#shell .gq-head strong,#modal-root .gq-head strong{color:var(--danger)}
-#shell .gq-head span,#modal-root .gq-head span{font-size:12px;color:var(--text-muted)}
-#shell .gq-head .btn,#modal-root .gq-head .btn{margin-left:auto}
-#shell .gq-names,#modal-root .gq-names{display:flex;gap:6px;flex-wrap:wrap;align-items:center}
-#shell .gq-chip,#modal-root .gq-chip{
-  background:var(--surface);border:1px solid var(--line);border-radius:999px;
-  padding:3px 10px;font-size:12px;cursor:pointer;color:inherit;
-}
-#shell .gq-chip:hover,#modal-root .gq-chip:hover{border-color:var(--danger)}
-#shell .gq-chip em,#modal-root .gq-chip em{font-style:normal;color:var(--danger);font-weight:700;margin-left:3px}
-#shell .gq-more,#modal-root .gq-more{font-size:12px;color:var(--text-muted)}
-
 /* ---- pipeline summary ---- */
 #shell .pipeline,#modal-root .pipeline{
   display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin-bottom:14px;

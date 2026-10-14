@@ -1155,34 +1155,12 @@ async function renderContacts(){
   var toolbar = contactsToolbar(list, profiles);
   if(state.contactsView === "board") return toolbar + pipelineSummaryHtml();
 
-  var stale = staleContacts();
-  var staleBanner = "";
-  /* Above the table, not buried in it. Neglect is the thing you most need to
-     see and the thing you are least likely to go looking for. */
-  if(stale.length && !state.stageFilter && !state.search){
-    staleBanner =
-      '<div class="gone-quiet">' +
-        '<div class="gq-head">' +
-          '<strong>' + stale.length + ' gone quiet</strong>' +
-          '<span>No activity for ' + STALE_DAYS + '+ days and nothing scheduled</span>' +
-          '<button class="btn btn-sm" data-action="sort-stale">Show them</button>' +
-        '</div>' +
-        '<div class="gq-names">' +
-          stale.slice(0, 6).map(function(c){
-            return '<button class="gq-chip" data-action="open-preview" data-id="' + c.id + '">' +
-              esc(c.name) + ' <em>' + daysSince(lastTouch(c)) + 'd</em></button>';
-          }).join("") +
-          (stale.length > 6 ? '<span class="gq-more">+' + (stale.length - 6) + ' more</span>' : '') +
-        '</div>' +
-      '</div>';
-  }
-
   if(list.length === 0){
-    return toolbar + staleBanner +
+    return toolbar +
       '<div class="panel empty"><div class="big-ico">\u25c6</div>' +
       (state.contacts.length ? 'Nothing matches those filters.' : 'No contacts yet.') + '</div>';
   }
-  return toolbar + staleBanner + contactsTableHtml(list, profiles);
+  return toolbar + contactsTableHtml(list, profiles);
 }
 
 function contactsToolbar(list, profiles){
@@ -2283,10 +2261,6 @@ document.addEventListener("click", function(e){
       else { state.sortBy = key; state.sortDesc = false; }
       return render();
     }
-    case "sort-stale":
-      state.sortBy = "touched"; state.sortDesc = false;
-      state.contactsView = "list";
-      return render();
     case "filter-stage":
       state.stageFilter = el.getAttribute("data-stage");
       state.contactsView = "list";

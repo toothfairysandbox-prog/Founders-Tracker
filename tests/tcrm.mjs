@@ -99,10 +99,8 @@ ok('2 a contact with no activity and nothing booked is flagged quiet',
    !!quietRow && quietRow.quiet, quietRow ? quietRow.touch : '');
 ok('2b one just as old but with a follow-up booked is not',
    !!schedRow && !schedRow.quiet, schedRow ? schedRow.touch : '');
-ok('2c the banner names them', await p.$$eval('.gone-quiet .gq-chip',
-   ns => ns.some(n => /Quiet/.test(n.textContent))));
-ok('2d and only them', await p.$$eval('.gone-quiet .gq-chip', ns => ns.length === 2),
-   (await p.$$eval('.gone-quiet .gq-chip', ns => ns.map(n => n.textContent.trim()))).join(' | '));
+ok('2c there is no gone-quiet banner above the table',
+   (await p.$$('.gone-quiet, [data-action="sort-stale"]')).length === 0);
 
 // --- 3. the pipeline summary ----------------------------------------------
 await p.click('[data-cview="board"]');
