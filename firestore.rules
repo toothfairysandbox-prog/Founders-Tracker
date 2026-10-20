@@ -2,8 +2,9 @@ rules_version = '2';
 
 // Founders Week Ledger — only the listed accounts can read or write.
 //
-// These addresses must match the MEMBERS map at the top of index.html.
-// Change one, change the other.
+// These addresses must match the MEMBERS maps in js/goals.js AND js/services.js.
+// Change one, change all three. This file does NOT deploy when you push —
+// publish it by hand in the Firebase console under Firestore -> Rules.
 service cloud.firestore {
   match /databases/{database}/documents {
 
@@ -13,7 +14,9 @@ service cloud.firestore {
         && request.auth.token.email.lower() in [
              'samuelgibby89@gmail.com',
              'garrettwoodhouse@gmail.com',
-             'toothfairysandbox@gmail.com'
+             'toothfairysandbox@gmail.com',
+             'pulpdoc2008@gmail.com',
+             'stugibby@hotmail.com'
            ];
     }
 

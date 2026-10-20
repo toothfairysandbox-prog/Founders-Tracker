@@ -9,10 +9,16 @@
    Map each GOOGLE ACCOUNT EMAIL to an identity. The two founders own the two
    columns; "team" is a shared account with full access and no column of its
    own. This same list is repeated in firestore.rules — change both together. */
+/* Who can get in, and who the app treats them as. Sign-in is Google, so every
+   address here has to be one that can sign in with Google — a plain Hotmail or
+   Outlook address can't unless a Google account has been made with it.
+   This list exists in three places; see SETUP.md before changing it. */
 var MEMBERS = {
   "samuelgibby89@gmail.com":    "samuel",
   "garrettwoodhouse@gmail.com": "garrett",
-  "toothfairysandbox@gmail.com":"team"
+  "toothfairysandbox@gmail.com":"team",
+  "pulpdoc2008@gmail.com":      "stuart",
+  "stugibby@hotmail.com":       "stuart"
 };
 
 var PEOPLE = [
@@ -51,8 +57,18 @@ function prioOf(g){ var p = parseInt(g.priority,10); return (p===1||p===2) ? p :
 /* A shared account that can see and edit everything but has no column of its
    own — the board is two founders wide by design. Its display name comes from
    whatever Google name the account signs in with; "Team" until it first does. */
-var TEAM = {id:"team", name:"Team", initials:"T"};
-var ROSTER = PEOPLE.concat([TEAM]);
+/* On the board, but without a column of their own. They can read and change
+   everything, comment, work the CRM and the Team sections — they just don't own
+   weekly goals, because a person's goals *are* their column.
+   Adding someone here gives them access. Adding them to PEOPLE gives them a
+   column, which is a bigger job: the board is a two-column layout and otherOf()
+   below assumes exactly two founders. */
+var ASSOCIATES = [
+  {id:"team",   name:"Team",   initials:"T"},
+  {id:"stuart", name:"Stuart", initials:"SG"}
+];
+var TEAM = ASSOCIATES[0];        // the shared sandbox account
+var ROSTER = PEOPLE.concat(ASSOCIATES);
 
 function initialsOf(name){
   var parts = String(name||"").trim().split(/\s+/).filter(Boolean);
@@ -62,9 +78,14 @@ function initialsOf(name){
 }
 function personById(id){
   for(var i=0;i<PEOPLE.length;i++){ if(PEOPLE[i].id===id) return PEOPLE[i]; }
-  if(id === TEAM.id){
-    var nm = (state.profiles[TEAM.id] || {}).displayName || TEAM.name;
-    return {id:TEAM.id, name:nm, initials:initialsOf(nm)};
+  for(var j=0;j<ASSOCIATES.length;j++){
+    if(ASSOCIATES[j].id === id){
+      /* Their real name once they've signed in, so comments read "Stuart"
+         rather than a placeholder. */
+      var a = ASSOCIATES[j];
+      var nm = (state.profiles[a.id] || {}).displayName || a.name;
+      return {id:a.id, name:nm, initials:initialsOf(nm)};
+    }
   }
   return PEOPLE[0];
 }

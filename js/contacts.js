@@ -12,6 +12,7 @@
        a lost contact leaves the pipeline but keeps its history.
 --------------------------------------------------------------------------- */
 var DEFAULT_STAGES = [
+  { id:"not_contacted", label:"Not contacted", hint:"On the list, nobody has reached out yet" },
   { id:"contacted",  label:"Contacted",  hint:"Reached out, nothing back yet" },
   { id:"interested", label:"Interested", hint:"They replied and want to hear more" },
   { id:"pilot",      label:"Pilot",      hint:"Trying it in the practice" },
@@ -151,9 +152,14 @@ var state = {
      the DOM, because the preview is rebuilt on every live update — a form that
      only existed as markup would vanish mid-sentence when Garrett saved
      something. {id, seq, type, dur, when, outcome, notes} or null. */
-  previewCall: null
+  previewCall: null,
+  /* An open "edit this conversation" form. Held in state, not just in the DOM:
+     the calls tab re-renders whenever anything live changes, and a form built
+     straight into the page would be wiped mid-sentence. */
+  editingCall: null
 };
 var previewCallSeq = 0;   /* bumped per opening, so stale draft keys never match */
+var editCallSeq = 0;
 
 var db = null, roomApi = null, userApi = null;
 var notesUnsub = null, callsUnsub = null;
@@ -668,7 +674,7 @@ async function addNote(contactId, contactName, title, bodyHtml){
    anti-rot mechanism: you record the outcome, the stage follows. Nobody has to
    remember to go and move a card afterwards, because nobody ever does. */
 var CALL_OUTCOMES = [
-  { id:"no_answer",  label:"No answer / left a message", stage:null         },
+  { id:"no_answer",  label:"No answer / left a message", stage:"contacted"  },
   { id:"spoke",      label:"Spoke — wants to hear more", stage:"interested" },
   { id:"pilot",      label:"Agreed to try it",           stage:"pilot"      },
   { id:"signed",     label:"Signed up",                  stage:"closed"     },
@@ -701,6 +707,43 @@ async function logCall(contact, data){
     await changeStage(contact, out.stage, {because:"from a logged "+CALL_TYPE_LABEL[data.type].toLowerCase()});
   }
   return out && out.lost ? "ask_lost_reason" : null;
+}
+
+/* Edit an already-logged conversation.
+   Only the fields on the form are written, so the outcome, who logged it and
+   when it was created all survive. editedAt/editedBy are added so the history
+   shows plainly that it was changed after the fact. */
+async function updateCall(callId, data){
+  var patch = {
+    type: data.type || "call",
+    durationMinutes: Number(data.dur) || 0,
+    notes: data.notes || "",
+    editedBy: state.me.id,
+    editedAt: new Date().toISOString()
+  };
+  var when = data.when ? new Date(data.when) : null;
+  if(when && !isNaN(when.getTime())) patch.occurredAt = when.toISOString();
+  await db.collection("calls").doc(callId).update(patch);
+}
+
+async function doSaveCallEdit(callId){
+  var d = state.editingCall;
+  if(!d || d.id !== callId) return;
+  var contact = state.contacts.find(function(c){ return c.id === state.previewId; }) ||
+                state.contacts.find(function(c){ return c.id === state.route.contactId; });
+  try{
+    await updateCall(callId, d);
+    if(contact){
+      await db.collection("contacts").doc(contact.id).update(touchPatch({}));
+      await logActivity("call_edited", {contactId:contact.id, contactName:contact.name, entityId:contact.id,
+        summary:"edited the notes on a conversation with "+contact.name});
+    }
+    state.editingCall = null;
+    toast("Conversation updated.");
+    render();
+  }catch(e){
+    toast("Couldn't save that edit ("+friendlyDbError(e)+")", true);
+  }
 }
 
 async function createReminder(contact, data){
@@ -1647,8 +1690,13 @@ async function renderContactFull(id){
     body = '<div class="panel" style="padding:6px 18px;">'+notesHtml+'</div>' + noteComposerHtml(c.id);
   } else if(state.contactTab==="calls"){
     var callsHtml = state.calls.length ? state.calls.map(function(cl){
-      return '<div class="note-item"><div class="head"><span class="pill pill-neutral">'+CALL_TYPE_LABEL[cl.type]+'</span> '+fmtDateTime(cl.occurredAt)+' · '+cl.durationMinutes+' min · logged by '+esc(profileName(cl.createdBy, profiles))+'</div>' +
-        (cl.notes?'<div class="body">'+esc(cl.notes)+'</div>':'')+'</div>';
+      if(state.editingCall && state.editingCall.id === cl.id) return editCallForm(cl);
+      var out = cl.outcome ? (CALL_OUTCOME[cl.outcome] ? CALL_OUTCOME[cl.outcome].label : cl.outcome) : "";
+      return '<div class="note-item"><div class="head"><span class="pill pill-neutral">'+CALL_TYPE_LABEL[cl.type]+'</span> '+fmtDateTime(cl.occurredAt)+' · '+cl.durationMinutes+' min · logged by '+esc(profileName(cl.createdBy, profiles))+
+        (cl.editedAt ? ' · <span class="dim">edited '+fmtDate(cl.editedAt)+'</span>' : '')+
+        '<button class="btn btn-sm btn-ghost" style="margin-left:auto" data-action="edit-call" data-id="'+cl.id+'">Edit</button></div>' +
+        (out?'<div class="sub" style="padding:0 0 4px">'+esc(out)+'</div>':'')+
+        (cl.notes?'<div class="body">'+esc(cl.notes)+'</div>':'<div class="body dim">No notes.</div>')+'</div>';
     }).join("") : '<div class="empty">No conversations logged yet.</div>';
     body = '<div class="panel" style="padding:6px 18px;">'+callsHtml+'</div>' +
       '<button class="btn btn-primary btn-sm" style="margin-top:12px;" data-action="log-call-form" data-id="'+c.id+'">+ Log a conversation</button>' +
@@ -1771,6 +1819,44 @@ function logCallForm(contactId, draft){
       : '<button class="btn btn-primary btn-sm" data-action="save-call" data-id="'+contactId+'">Save conversation</button>') +
   '</div>';
 }
+/* Editing a conversation that has already been logged.
+   Outcome is shown but deliberately not editable: it is what moved the contact
+   along the pipeline at the time, and quietly re-running that on an edit would
+   move people around days later. Change the stage directly instead. */
+function editCallForm(cl){
+  var d = state.editingCall;
+  var dk = function(fld){ return ' data-draft="ecall:'+d.seq+':'+fld+'"'; };
+  var types = [["call","Call"],["video","Video meeting"],["in_person","In person"],["other","Other"]];
+  return '<div class="panel" style="padding:16px;margin:8px 0;border:1px solid var(--accent);">' +
+    '<div class="field-row">' +
+      '<div class="field"><label>Type</label><select'+dk("type")+'>' +
+        types.map(function(t){ return '<option value="'+t[0]+'"'+(d.type===t[0]?' selected':'')+'>'+t[1]+'</option>'; }).join("") +
+      '</select></div>' +
+      '<div class="field"><label>Duration (min)</label><input type="number" min="0"'+dk("dur")+' value="'+esc(d.dur)+'"></div>' +
+    '</div>' +
+    '<div class="field"><label>When</label><input type="datetime-local"'+dk("when")+' value="'+esc(d.when)+'"></div>' +
+    '<div class="field"><label>Notes</label><textarea rows="4"'+dk("notes")+' placeholder="What did you cover?">'+esc(d.notes)+'</textarea></div>' +
+    (cl.outcome ? '<div class="hint">Logged as \u201c'+esc(CALL_OUTCOME[cl.outcome] ? CALL_OUTCOME[cl.outcome].label : cl.outcome)+
+      '\u201d. That is kept as the record of what happened at the time \u2014 to move them now, use the stage control.</div>' : '') +
+    '<div class="row" style="display:flex;gap:8px;margin-top:10px">' +
+      '<button class="btn btn-primary btn-sm" data-action="save-call-edit" data-id="'+cl.id+'">Save changes</button>' +
+      '<button class="btn btn-sm btn-ghost" data-action="cancel-call-edit">Cancel</button>' +
+    '</div>' +
+  '</div>';
+}
+/* Same trick as the preview form: every keystroke lands in state, so a live
+   update from the other founder rebuilds the form with the text still in it. */
+function syncEditCallField(e){
+  var t = e.target;
+  var k = t && t.getAttribute && t.getAttribute("data-draft");
+  if(!k || k.indexOf("ecall:") !== 0 || !state.editingCall) return;
+  var parts = k.split(":");
+  if(+parts[1] !== state.editingCall.seq) return;
+  state.editingCall[parts[2]] = t.value;
+}
+document.addEventListener("input", syncEditCallField);
+document.addEventListener("change", syncEditCallField);
+
 /* Keystrokes in the preview form go straight into state.previewCall, so the
    next render — ours or one triggered by the other founder — rebuilds the form
    with them in it. The seq check drops input from a form that has since been
@@ -1801,6 +1887,7 @@ function renderModal(){
   /* A log form belongs to one preview. Closing it, or switching to someone
      else, throws the form away rather than carrying it to the next contact. */
   if(state.previewCall && state.previewCall.id !== state.previewId) state.previewCall = null;
+  if(state.editingCall && !state.calls.some(function(c){ return c.id === state.editingCall.id; })) state.editingCall = null;
   if(state.previewId){
     var c = state.contacts.find(function(x){return x.id===state.previewId;});
     if(!c){ root.innerHTML=""; return; }
@@ -2410,6 +2497,20 @@ document.addEventListener("click", function(e){
     case "log-call-form":
       state.route = Object.assign({}, state.route, {showCallForm:true}); return render();
     case "save-call": return doSaveCall(id);
+    case "edit-call": {
+      var cl = state.calls.find(function(x){ return x.id === id; });
+      if(!cl) return;
+      state.editingCall = {
+        id: cl.id, seq: ++editCallSeq,
+        type: cl.type || "call",
+        dur: String(cl.durationMinutes || 0),
+        when: toLocalInputValue(cl.occurredAt || cl.createdAt || new Date().toISOString()),
+        notes: cl.notes || ""
+      };
+      return render();
+    }
+    case "cancel-call-edit": state.editingCall = null; return render();
+    case "save-call-edit": return doSaveCallEdit(id);
     case "new-reminder-form":
       state.showNextStepAfter = id; return render();
     case "save-reminder": return doSaveReminder(id);

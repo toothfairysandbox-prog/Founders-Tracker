@@ -4,9 +4,12 @@
 (function(){
 "use strict";
 
-var MEMBERS = {"samuelgibby89@gmail.com": "samuel", "garrettwoodhouse@gmail.com": "garrett", "toothfairysandbox@gmail.com": "team"};
-var COLORS = {samuel:"#5B3E96", garrett:"#1F8A5F", team:"#B9781A"};
-var NAMES  = {samuel:"Samuel", garrett:"Garrett", team:"Team"};
+/* Second copy of the allow list — see SETUP.md, it lives in three places. */
+var MEMBERS = {"samuelgibby89@gmail.com": "samuel", "garrettwoodhouse@gmail.com": "garrett",
+               "toothfairysandbox@gmail.com": "team",
+               "pulpdoc2008@gmail.com": "stuart", "stugibby@hotmail.com": "stuart"};
+var COLORS = {samuel:"#5B3E96", garrett:"#1F8A5F", team:"#B9781A", stuart:"#1F6F8A"};
+var NAMES  = {samuel:"Samuel", garrett:"Garrett", team:"Team", stuart:"Stuart"};
 
 var _db = null, _me = null;
 

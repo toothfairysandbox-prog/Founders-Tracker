@@ -117,14 +117,27 @@ have one at any stage) and "not interested" (an exit, with a reason attached).
 
 ## Things that will bite you
 
-**Adding a fourth person** means editing the allow list in **three** places, not one:
+**Adding someone** means editing the allow list in **three** places. This list used to
+say three and then name two, which is exactly how you end up with a half-added person:
 
-- `MEMBERS` at the top of `js/goals.js`
-- `firestore.rules` — which also covers attachments
+- `MEMBERS` at the top of `js/goals.js` — who can sign in, and who they are
+- `MEMBERS` at the top of `js/services.js` — a second copy, plus their name and colour
+- `firestore.rules` — the database's own gate, which also covers attachments
 
-Change only the first and they'll sign in successfully to a board that refuses every
-save. And **`firestore.rules` does not deploy when you push** — publish it by hand from
-the Firebase console, under Firestore → Rules.
+Miss the third and they'll sign in successfully to a board that refuses every save.
+And **`firestore.rules` does not deploy when you push** — publish it by hand from the
+Firebase console, under Firestore → Rules.
+
+**Access versus a column.** `PEOPLE` in `js/goals.js` is the founders with their own
+weekly goals — each one is a column on the board. `ASSOCIATES` is everyone else with
+access: they can read and change everything, comment, and work the CRM and the Team
+sections, but they don't own goals. Moving someone from `ASSOCIATES` to `PEOPLE` is not
+a one-line change — the board is a two-column layout, `otherOf()` assumes exactly two
+founders, and the goal nav is hardcoded to `samuel` / `garrett` / `both`.
+
+Sign-in is Google, so every address in the allow list has to be able to sign in with
+Google. A plain Hotmail or Outlook address can't, unless a Google account has been
+created using it.
 
 **Two people editing at once.** The app takes live updates, so when Garrett saves
 something your screen redraws. Anything you have half-typed is held in state and

@@ -106,10 +106,12 @@ ok('2c there is no gone-quiet banner above the table',
 await p.click('[data-cview="board"]');
 await p.waitForTimeout(500);
 const stages = await p.$$eval('.pstage .ps-label', ns => ns.map(n => n.textContent));
-ok('3 five stages, in order',
-   stages.join(',') === 'Contacted,Interested,Pilot,Closed,Onboarded', stages.join(','));
-const counts = await p.$$eval('.pstage .ps-count', ns => ns.map(n => +n.textContent));
-ok('3b legacy record counted under Interested', counts[1] === 3, JSON.stringify(counts));
+ok('3 six stages, in order',
+   stages.join(',') === 'Not contacted,Contacted,Interested,Pilot,Closed,Onboarded', stages.join(','));
+const countBy = () => p.$$eval('.pstage', ns => Object.fromEntries(ns.map(n => [
+  n.querySelector('.ps-label').textContent.trim(), +n.querySelector('.ps-count').textContent])));
+const counts = await countBy();
+ok('3b legacy record counted under Interested', counts['Interested'] === 3, JSON.stringify(counts));
 ok('3c pipeline value totals only contacts that have one',
    /\$650/.test(await p.$eval('.pipe-total', n => n.textContent).catch(() => '')),
    await p.$eval('.pipe-total', n => n.textContent.trim()).catch(() => 'no total shown'));
@@ -190,8 +192,8 @@ await p.waitForTimeout(400);
 await p.click('[data-nav="contacts"]'); await p.waitForTimeout(600);
 ok('5e they drop out of the table', !(await rows()).some(r => /Dr\. Quiet/.test(r.name)));
 await p.click('[data-cview="board"]'); await p.waitForTimeout(500);
-const counts2 = await p.$$eval('.pstage .ps-count', ns => ns.map(n => +n.textContent));
-ok('5f and out of the pipeline count', counts2[1] === 2, JSON.stringify(counts2));
+const counts2 = await countBy();
+ok('5f and out of the pipeline count', counts2['Interested'] === 2, JSON.stringify(counts2));
 ok('5g the reason shows up in the breakdown',
    /Price/.test(await p.$eval('.lost-panel', n => n.textContent).catch(() => '')));
 await p.click('[data-cview="list"]'); await p.waitForTimeout(500);

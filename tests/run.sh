@@ -41,6 +41,12 @@ echo
 echo "── crm ──────────────────────────────────────────"
 node tcrm.mjs
 echo
+echo "── editing a logged call ────────────────────────"
+node tcalledit.mjs
+echo
+echo "── access ───────────────────────────────────────"
+node taccess.mjs
+echo
 echo "── pipeline stages ──────────────────────────────"
 node tstages.mjs
 echo

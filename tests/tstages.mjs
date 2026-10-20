@@ -58,12 +58,13 @@ await p.click('[data-cview="board"]');          // the pipeline, where the stage
 await p.waitForTimeout(600);
 
 // --- 1. the default pipeline is on screen --------------------------------
+const DEFAULTS = ['Not contacted', 'Contacted', 'Interested', 'Pilot', 'Closed', 'Onboarded'];
 const start = await labels();
-ok('1. default five stages render', start.length === 5 && start[0] === 'Contacted' && start[4] === 'Onboarded', JSON.stringify(start));
+ok('1. the default pipeline renders', JSON.stringify(start) === JSON.stringify(DEFAULTS), JSON.stringify(start));
 
 // --- 2. the editor opens with a row per stage ----------------------------
 await openEditor();
-ok('2. editor lists every stage', (await editorLabels()).length === 5);
+ok('2. editor lists every stage', (await editorLabels()).length === DEFAULTS.length);
 
 // --- 3. add a stage ------------------------------------------------------
 await p.fill('#se-new', 'Proposal sent');
@@ -73,17 +74,19 @@ ok('3. added stage appears in the editor', (await editorLabels()).includes('Prop
 await p.click('[data-action="stage-save"]');
 await p.waitForTimeout(700);
 const after3 = await labels();
-ok('4. added stage saved to the pipeline', after3.length === 6 && after3[5] === 'Proposal sent', JSON.stringify(after3));
-ok('5. pipeline persisted to settings/crm', (await savedStages() || []).length === 6);
+ok('4. added stage saved to the pipeline',
+  after3.length === DEFAULTS.length + 1 && after3[after3.length - 1] === 'Proposal sent', JSON.stringify(after3));
+ok('5. pipeline persisted to settings/crm', (await savedStages() || []).length === DEFAULTS.length + 1);
 
 // --- 6. renaming keeps every contact where it is -------------------------
 const beforeRename = await contact('s_c');
 await openEditor();
-await p.fill('#modal-root .stage-edit-row:nth-child(3) .se-label', 'Chair trial');
+const pilotRow = (await editorLabels()).indexOf('Pilot') + 1;
+await p.fill(`#modal-root .stage-edit-row:nth-child(${pilotRow}) .se-label`, 'Chair trial');
 await p.click('[data-action="stage-save"]');
 await p.waitForTimeout(700);
 const after6 = await labels();
-ok('6. rename shows the new label', after6[2] === 'Chair trial', JSON.stringify(after6));
+ok('6. rename shows the new label', after6.includes('Chair trial') && !after6.includes('Pilot'), JSON.stringify(after6));
 const afterRename = await contact('s_c');
 ok('7. rename left the contact\'s stage id alone',
   afterRename.stage === 'pilot' && beforeRename.stage === 'pilot', `now ${afterRename.stage}`);
@@ -95,18 +98,22 @@ ok('8. renamed stage still shows its contacts',
 
 // --- 9. reorder ----------------------------------------------------------
 await openEditor();
-await p.click('#modal-root .stage-edit-row:nth-child(2) [data-action="stage-down"]');
+const before9 = await editorLabels();
+const ci = before9.indexOf('Chair trial');
+const follower = before9[ci + 1];
+await p.click(`#modal-root .stage-edit-row:nth-child(${ci + 1}) [data-action="stage-down"]`);
 await p.waitForTimeout(250);
 const reordered = await editorLabels();
-ok('9. moving a stage down swaps it with the next', reordered[1] === 'Chair trial' && reordered[2] === 'Interested', JSON.stringify(reordered));
+ok('9. moving a stage down swaps it with the next',
+  reordered[ci] === follower && reordered[ci + 1] === 'Chair trial', JSON.stringify(reordered));
 await p.click('[data-action="stage-save"]');
 await p.waitForTimeout(700);
-ok('10. new order saved', (await labels())[1] === 'Chair trial');
+ok('10. new order saved', (await labels())[ci] === follower);
 
 // --- 11. a pipeline needs at least one stage -----------------------------
 await openEditor();
 ok('11. remove is offered while several stages exist',
-  await p.$$eval('#modal-root [data-action="stage-remove"]:not([disabled])', n => n.length === 6));
+  await p.$$eval('#modal-root [data-action="stage-remove"]:not([disabled])', n => n.length === DEFAULTS.length + 1));
 
 // --- 12. deleting a stage that holds contacts must reassign them ---------
 // "Chair trial" is now at position 2 and holds Dr. Charlie and Dr. Delta.
@@ -127,7 +134,8 @@ ok('15. its contacts were moved, not orphaned',
 
 // --- 16. duplicate names are refused ------------------------------------
 await openEditor();
-await p.fill('#modal-root .stage-edit-row:nth-child(2) .se-label', 'Contacted');
+const firstLabel = (await editorLabels())[0];
+await p.fill('#modal-root .stage-edit-row:nth-child(2) .se-label', firstLabel);
 await p.click('[data-action="stage-save"]');
 await p.waitForTimeout(500);
 ok('16. two stages cannot share a name',
@@ -153,8 +161,7 @@ ok('20. cancel closed the editor', await p.$$eval('#modal-root .stage-edit-list'
 await openEditor();
 await p.click('[data-action="stage-reset"]');
 await p.waitForTimeout(250);
-ok('21. reset restores the default five', JSON.stringify(await editorLabels()) ===
-  JSON.stringify(['Contacted', 'Interested', 'Pilot', 'Closed', 'Onboarded']));
+ok('21. reset restores the defaults', JSON.stringify(await editorLabels()) === JSON.stringify(DEFAULTS));
 await p.click('[data-action="close-stages"]');
 await p.waitForTimeout(300);
 
