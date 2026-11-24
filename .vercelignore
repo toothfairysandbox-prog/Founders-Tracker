@@ -1,0 +1,7 @@
+# Keep the test harness and tooling out of the deployed site.
+tests/
+tools/
+node_modules/
+.github/
+*.md
+!README.md

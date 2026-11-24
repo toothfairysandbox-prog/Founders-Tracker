@@ -52,24 +52,34 @@ is the one thing Git can't sort out by itself.
 
 ---
 
-## 2. Netlify
+## 2. Hosting (Vercel)
 
-**What this gets you:** no more dragging a folder onto Netlify. Push to GitHub, the
-site updates within about a minute.
+**What this gets you:** push to GitHub, the site updates within about a minute.
 
-1. Log into Netlify and open your existing site (the one on
-   `delicate-duckanoo-43e1cf.netlify.app`).
-2. **Site configuration → Build & deploy → Continuous deployment → Link repository**
-3. Choose GitHub, authorise it, pick `Founders-Tracker`.
-4. Branch `main`. Leave the build command and publish directory alone — `netlify.toml`
-   in the repo already sets them.
+1. Go to [vercel.com/new](https://vercel.com/new) and sign in with GitHub.
+2. **Import** `Founders-Tracker`.
+3. **Framework Preset: Other.** Leave Build Command, Output Directory and Install
+   Command alone — `vercel.json` in the repo sets them.
+4. Before the first deploy, open **Settings → Environment Variables** and tick
+   **Enable access to System Environment Variables**. Without it the build can't
+   read the commit hash and the sidebar stamp reads `local` instead of the
+   commit. The site still works; the stamp is just less useful.
 5. Deploy.
 
-Your URL doesn't change, so nothing Garrett has saved breaks.
+Your address is whatever Vercel assigns, something like
+`founders-tracker.vercel.app`. Everyone's bookmark needs updating once.
 
-**How to tell it worked:** the bottom of the sidebar shows `build` followed by seven
-characters. That's the commit that's live. If it doesn't match your latest commit,
-the deploy hasn't finished or you're looking at a cached page — Ctrl+Shift+R.
+**How to tell it worked:** the bottom of the sidebar shows `build` followed by
+seven characters. That's the commit that's live. If it doesn't match your latest
+commit, the deploy hasn't finished or you're looking at a cached page —
+Ctrl+Shift+R.
+
+**If the build fails** with something about a missing output directory, set
+Build Command to empty in Settings → Build & Deployment. You lose the commit
+stamp and nothing else.
+
+`netlify.toml` is still in the repo and harmless. Delete it once you're happy on
+Vercel, or leave it if you want the option of going back.
 
 ---
 
